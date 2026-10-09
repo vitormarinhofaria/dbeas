@@ -3,7 +3,7 @@
 Arquivo de continuidade: leia antes de retomar o trabalho com um contexto novo.
 Atualize ao fim de cada etapa.
 
-**Última atualização:** 2026-10-09 (rodada 3 — transações e edição de dados)
+**Última atualização:** 2026-10-09 (rodada 4 — autocomplete e diagnóstico)
 
 ## Como rodar e testar
 
@@ -11,7 +11,8 @@ Atualize ao fim de cada etapa.
   `~/.local/state/dbeas/session.json`.
 - Para não tocar na configuração real, isole com
   `XDG_CONFIG_HOME=/tmp/x/config XDG_STATE_HOME=/tmp/x/state cargo run`.
-- `cargo test` — testes unitários (57) + 7 de integração com PG.
+- `cargo test` — testes unitários (68) + 7 de integração com PG. O build do
+  `pg_query` precisa de `clang`.
 - Testes com PostgreSQL real (`tests/postgres.rs`), ignorados sem a variável:
   ```
   docker run -d --name dbeas-test-pg -e POSTGRES_PASSWORD=dbeas -e POSTGRES_USER=dbeas \
@@ -71,6 +72,20 @@ Atualize ao fim de cada etapa.
   célula/tudo, Ctrl+S com popup (verificado no app), Ctrl+Shift+S. Ver
   [edição de dados](../usabilidade/edicao-dados.md).
 
+## Feito (rodada 4 — editor SQL: autocomplete e diagnóstico)
+
+Decisão do usuário (2026-10-09): autocomplete embutido a partir do catálogo +
+diagnóstico de sintaxe com libpg_query; LSP externo fica como camada opcional
+futura. Autocomplete automático (após `.` e 2+ letras) e por Ctrl+Espaço.
+
+- [x] `src/diagnostics.rs`: `pg_query_parse` via FFI (o wrapper do crate descarta
+  `cursorpos`), posição por instrução → linha/coluna no documento. Testado.
+- [x] `src/completion.rs`: contexto léxico (alias., schema., FROM/JOIN, colunas das
+  tabelas citadas, palavras-chave). Testado.
+- [x] Integração no editor: popup junto ao cursor (verificado no app), teclas,
+  Ctrl+Espaço, diagnóstico 400 ms após editar com marcação no gutter e rodapé
+  (verificado no app). Ver [editor inteligente](../arquitetura/editor-inteligente.md).
+
 ## Pendente (próximas rodadas)
 
 1. ~~Transformações de SQL~~ — feito na rodada 2 (ver
@@ -78,8 +93,8 @@ Atualize ao fim de cada etapa.
 2. ~~Edição de dados~~ — feito na rodada 3 (ver [edição](../usabilidade/edicao-dados.md)).
    Falta: inserir/excluir linhas.
 3. ~~requireTransaction~~ — feito na rodada 3 (ver [transações](../usabilidade/transacoes.md)).
-4. **LSP / autocomplete / diagnósticos antes da execução** (§7.2): hoje a barra de
-   status informa "indisponível". O catálogo já tem tudo para autocomplete local.
+4. ~~Autocomplete / diagnóstico~~ — feito na rodada 4 (embutido). Pendente opcional:
+   integração com servidor LSP externo.
 5. TLS (`sslMode`) — decidido adiar; conexão usa `NoTls`.
 6. Melhorias conhecidas: o editor não rola horizontalmente (sem quebra de linha,
    linhas longas ficam cortadas); `timestamptz` é exibido em UTC; a altura usada no
@@ -101,3 +116,4 @@ Atualize ao fim de cada etapa.
 - [Execução de SQL](../usabilidade/execucao-sql.md)
 - [Transações](../usabilidade/transacoes.md)
 - [Edição de dados](../usabilidade/edicao-dados.md)
+- [Editor inteligente](../arquitetura/editor-inteligente.md)

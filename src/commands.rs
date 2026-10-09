@@ -21,6 +21,8 @@ pub enum Command {
     /// Cancela a consulta em andamento na aba ativa.
     CancelQuery,
     QuickOpen,
+    /// Abre a lista de sugestões do editor.
+    Complete,
     NextWorkspace,
     PreviousWorkspace,
     CloseTab,
@@ -67,6 +69,11 @@ pub const SHORTCUTS: &[Shortcut] = &[
         description: "Abrir tabela/view ou arquivo",
     },
     Shortcut {
+        keys: "Ctrl+Espaço",
+        command: Command::Complete,
+        description: "Sugerir tabelas, colunas e palavras-chave",
+    },
+    Shortcut {
         keys: "Ctrl+Tab",
         command: Command::NextWorkspace,
         description: "Próximo workspace",
@@ -102,6 +109,7 @@ pub fn lookup(key: &Key, physical: key::Physical, modifiers: Modifiers) -> Optio
         Key::Named(key::Named::Tab) if ctrl && shift => Some(Command::PreviousWorkspace),
         Key::Named(key::Named::Tab) if ctrl => Some(Command::NextWorkspace),
         Key::Named(key::Named::F5) if !ctrl && !shift => Some(Command::RefreshMetadata),
+        Key::Named(key::Named::Space) if ctrl && !shift => Some(Command::Complete),
         _ if ctrl
             && shift
             && key.to_latin(physical).map(|c| c.to_ascii_lowercase()) == Some('s') =>

@@ -18,6 +18,7 @@ chrono = "0.4"
 postgres-protocol = "0.6"
 fallible-iterator = "0.2"
 futures-util = "0.3"
+pg_query = "6"
 
 [dev-dependencies]
 tempfile = "3"

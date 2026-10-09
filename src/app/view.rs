@@ -59,28 +59,28 @@ impl App {
             self.modal.as_ref().map(|m| self.modal_view(m))
         };
 
-        match overlay {
-            Some(content) => stack![
-                base,
-                opaque(
-                    mouse_area(center(opaque(content)).style(|_| {
-                        container::Style {
-                            background: Some(
-                                Color {
-                                    a: 0.55,
-                                    ..Color::BLACK
-                                }
-                                .into(),
-                            ),
-                            ..container::Style::default()
-                        }
-                    }))
-                    .on_press(Message::CloseModal)
-                )
-            ]
-            .into(),
-            None => base,
-        }
+        // A raiz é sempre um `stack` com o layout na primeira camada: trocar o
+        // tipo do widget raiz faria o Iced recriar todos os widgets, perdendo
+        // foco do editor e posições de rolagem.
+        let layer: Element<'_, Message> = match overlay {
+            Some(content) => opaque(
+                mouse_area(center(opaque(content)).style(|_| {
+                    container::Style {
+                        background: Some(
+                            Color {
+                                a: 0.55,
+                                ..Color::BLACK
+                            }
+                            .into(),
+                        ),
+                        ..container::Style::default()
+                    }
+                }))
+                .on_press(Message::CloseModal),
+            ),
+            None => Space::new().into(),
+        };
+        stack![base, layer].into()
     }
 
     // ------------------------------------------------------------------
@@ -268,10 +268,37 @@ impl App {
         let editor: Element<'_, Message> = if tab.loading_file {
             center(text("Carregando arquivo…")).into()
         } else {
+            let mut error_lines: Vec<usize> = tab
+                .diagnostics
+                .iter()
+                .map(|d| d.line.saturating_sub(1))
+                .collect();
+            error_lines.extend(tab.run.error.as_ref().and_then(|e| e.line));
+            let completion = tab.completion.as_ref().map(|c| {
+                let text = tab.editor.text();
+                let (line, column) = crate::query::split::line_col(&text, c.data.start);
+                sql_editor::CompletionView {
+                    items: &c.data.items,
+                    selected: c.selected,
+                    active: c.active,
+                    line: line - 1,
+                    column: column - 1,
+                }
+            });
             sql_editor::view(EditorView {
                 content: &tab.editor,
+                editor_id: tab.editor_id.clone(),
                 scroll_id: tab.editor_scroll_id.clone(),
-                error_line: tab.run.error.as_ref().and_then(|e| e.line),
+                error_lines,
+                scroll_y: tab.editor_viewport.map_or(0.0, |v| v.absolute_offset().y),
+                completion,
+                completion_keys: sql_editor::CompletionKeys {
+                    up: Message::CompletionMove(-1),
+                    down: Message::CompletionMove(1),
+                    accept: Message::CompletionAccept,
+                    close: Message::CompletionClose,
+                },
+                on_pick: Message::CompletionPick,
                 on_action: Message::Editor,
                 on_command: Message::Command,
                 on_scroll: Message::EditorScrolled,
@@ -281,7 +308,27 @@ impl App {
                 ),
             })
         };
-        let editor = container(editor)
+        let mut editor_panel = column![editor];
+        if let Some(first) = tab.diagnostics.first() {
+            let more = tab.diagnostics.len() - 1;
+            let suffix = if more > 0 {
+                format!(" (+{more})")
+            } else {
+                String::new()
+            };
+            editor_panel = editor_panel.push(
+                container(
+                    text(format!(
+                        "Sintaxe — linha {}, coluna {}: {}{suffix}",
+                        first.line, first.column, first.message
+                    ))
+                    .size(12)
+                    .style(danger_text),
+                )
+                .padding([2, 8]),
+            );
+        }
+        let editor = container(editor_panel)
             .height(Length::FillPortion(bottom))
             .width(Length::Fill);
 
@@ -312,10 +359,21 @@ impl App {
                 bar = bar.push(text(path.display().to_string()).size(12).style(muted));
             }
             let lsp = tooltip(
-                text("autocomplete/diagnóstico LSP: indisponível").size(12).style(muted),
-                container(text("O servidor LSP SQL ainda não foi integrado. Erros do PostgreSQL são mostrados com linha e coluna após a execução.").size(12))
-                    .padding(6)
-                    .style(container::rounded_box),
+                text("sintaxe: parser do PostgreSQL · autocomplete: catálogo")
+                    .size(12)
+                    .style(muted),
+                container(
+                    text(
+                        "Diagnóstico de sintaxe com o parser do PostgreSQL (libpg_query), sem consultar o \
+                         servidor. Nomes de tabelas e colunas só são validados ao executar. Autocomplete \
+                         com os metadados do workspace ativo (Ctrl+Espaço). Servidor LSP externo: não \
+                         configurado.",
+                    )
+                    .size(12),
+                )
+                .padding(6)
+                .max_width(420)
+                .style(container::rounded_box),
                 tooltip::Position::Top,
             );
             bar = bar.push(lsp);

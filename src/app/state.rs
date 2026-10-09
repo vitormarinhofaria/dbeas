@@ -10,9 +10,11 @@ use iced::widget::Id;
 use iced::widget::scrollable::Viewport;
 use iced::widget::text_editor::Content;
 
+use crate::completion::Completion;
 use crate::connection::{ConnectionHandle, Status, TxState};
 use crate::data_edit::{EditTarget, Pending};
 use crate::data_grid::ScrollState;
+use crate::diagnostics::Diagnostic;
 use crate::file_explorer::FileEntry;
 use crate::metadata::Catalog;
 use crate::query::ResultSet;
@@ -164,6 +166,21 @@ pub struct Tab {
     pub pending: Pending,
     /// Célula em edição.
     pub editing: Option<CellEditor>,
+    pub editor_id: Id,
+    /// Lista de sugestões aberta no editor.
+    pub completion: Option<CompletionState>,
+    /// Erros de sintaxe do texto atual (libpg_query).
+    pub diagnostics: Vec<Diagnostic>,
+    /// Incrementado a cada edição; diagnósticos de revisões antigas são ignorados.
+    pub text_rev: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompletionState {
+    pub data: Completion,
+    pub selected: usize,
+    /// Ativada por Ctrl+Espaço ou pelas setas (ver `sql_editor::CompletionView`).
+    pub active: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -267,6 +284,10 @@ impl Tab {
             edit_target: None,
             pending: Pending::new(),
             editing: None,
+            editor_id: Id::unique(),
+            completion: None,
+            diagnostics: Vec::new(),
+            text_rev: 0,
         }
     }
 

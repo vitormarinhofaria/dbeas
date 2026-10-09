@@ -199,6 +199,21 @@ pub enum Message {
     EditorScrolled(Viewport),
     GridScrolled(Viewport),
     SelectCell(usize, usize),
+    CompletionMove(i32),
+    CompletionAccept,
+    CompletionClose,
+    CompletionPick(usize),
+    DiagnoseDue {
+        ws: WorkspaceId,
+        tab: u64,
+        rev: u64,
+    },
+    Diagnosed {
+        ws: WorkspaceId,
+        tab: u64,
+        rev: u64,
+        diagnostics: Vec<crate::diagnostics::Diagnostic>,
+    },
     StartEdit(usize, usize),
     EditInput(String),
     CommitEdit,
@@ -592,7 +607,10 @@ impl App {
                 ws.sync_tx();
                 match result {
                     Ok(()) => {
-                        if let Some(Modal::GridSave { needs_transaction, .. }) = &mut self.modal {
+                        if let Some(Modal::GridSave {
+                            needs_transaction, ..
+                        }) = &mut self.modal
+                        {
                             *needs_transaction = command != TxCommand::Begin;
                         }
                         self.notify(match command {
@@ -687,6 +705,8 @@ impl App {
                     Ok(content) => {
                         t.editor = text_editor::Content::with_text(&content);
                         t.dirty = false;
+                        t.text_rev += 1;
+                        return schedule_diagnostics(ws, tab, t.text_rev);
                     }
                     Err(e) => {
                         t.run.error = Some(ErrorInfo {
@@ -726,6 +746,8 @@ impl App {
                 if let Some(ws) = self.active_ws_mut() {
                     if index < ws.tabs.len() {
                         ws.active_tab = index;
+                        let tab = &ws.tabs[index];
+                        return schedule_diagnostics(ws.desc.id.clone(), tab.id, tab.text_rev);
                     }
                 }
                 Task::none()
@@ -799,6 +821,67 @@ impl App {
                 if let Some(tab) = self.active_tab_mut() {
                     tab.selected = Some((row, col));
                     tab.columns.pressed = None;
+                }
+                Task::none()
+            }
+            Message::CompletionMove(delta) => {
+                if let Some(c) = self.active_tab_mut().and_then(|t| t.completion.as_mut()) {
+                    let len = c.data.items.len().max(1) as i32;
+                    if c.active {
+                        c.selected = (c.selected as i32 + delta).rem_euclid(len) as usize;
+                    } else {
+                        // Primeira seta ativa a lista: ↓ vai ao primeiro item, ↑ ao último.
+                        c.active = true;
+                        c.selected = if delta > 0 { 0 } else { (len - 1) as usize };
+                    }
+                }
+                Task::none()
+            }
+            Message::CompletionClose => {
+                if let Some(tab) = self.active_tab_mut() {
+                    tab.completion = None;
+                }
+                Task::none()
+            }
+            Message::CompletionPick(index) => {
+                if let Some(c) = self.active_tab_mut().and_then(|t| t.completion.as_mut()) {
+                    c.selected = index;
+                }
+                self.accept_completion()
+            }
+            Message::CompletionAccept => self.accept_completion(),
+            Message::DiagnoseDue { ws, tab, rev } => {
+                let Some(t) = self.tab_by_id(&ws, tab) else {
+                    return Task::none();
+                };
+                if t.text_rev != rev {
+                    return Task::none();
+                }
+                let text = t.editor.text();
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || crate::diagnostics::check(&text))
+                            .await
+                            .unwrap_or_default()
+                    },
+                    move |diagnostics| Message::Diagnosed {
+                        ws: ws.clone(),
+                        tab,
+                        rev,
+                        diagnostics,
+                    },
+                )
+            }
+            Message::Diagnosed {
+                ws,
+                tab,
+                rev,
+                diagnostics,
+            } => {
+                if let Some(t) = self.tab_by_id(&ws, tab) {
+                    if t.text_rev == rev {
+                        t.diagnostics = diagnostics;
+                    }
                 }
                 Task::none()
             }
@@ -1141,7 +1224,13 @@ impl App {
         }
         self.active = Some(index);
         self.quick_open = None;
-        let mut tasks = Vec::new();
+        let ws = &self.workspaces[index];
+        let tab = &ws.tabs[ws.active_tab];
+        let mut tasks = vec![schedule_diagnostics(
+            ws.desc.id.clone(),
+            tab.id,
+            tab.text_rev,
+        )];
         let ws = &self.workspaces[index];
         if ws.status == Status::Disconnected && ws.desc.config.is_ok() {
             tasks.push(self.connect(index));
@@ -1393,16 +1482,17 @@ impl App {
             );
         }
         let is_edit = action.is_edit();
+        let inserted = match &action {
+            text_editor::Action::Edit(text_editor::Edit::Insert(c)) => Some(*c),
+            _ => None,
+        };
+        let deleting = matches!(
+            action,
+            text_editor::Action::Edit(text_editor::Edit::Backspace | text_editor::Edit::Delete)
+        );
         tab.editor.perform(action);
-        if is_edit {
-            if tab.file_path().is_some() {
-                tab.dirty = true;
-            }
-            tab.generated = false;
-            tab.pristine = None;
-        }
         let line = tab.editor.cursor().position.line;
-        match sql_editor::scroll_to_show(line, tab.editor_viewport.as_ref()) {
+        let scroll = match sql_editor::scroll_to_show(line, tab.editor_viewport.as_ref()) {
             Some(y) => operation::scroll_to(
                 tab.editor_scroll_id.clone(),
                 AbsoluteOffset {
@@ -1411,7 +1501,103 @@ impl App {
                 },
             ),
             None => Task::none(),
+        };
+        if !is_edit {
+            tab.completion = None;
+            return scroll;
         }
+
+        // Autocomplete automático: ao digitar parte de um nome ou `.`.
+        let open = tab.completion.is_some();
+        let diagnose = self.text_changed();
+        match inserted {
+            Some(c) if c.is_alphanumeric() || c == '_' || c == '.' => {
+                self.refresh_completion(false)
+            }
+            _ if deleting && open => self.refresh_completion(false),
+            _ => {
+                if let Some(tab) = self.active_tab_mut() {
+                    tab.completion = None;
+                }
+            }
+        }
+        Task::batch([scroll, diagnose])
+    }
+
+    /// Marca o texto da aba ativa como alterado e agenda o diagnóstico.
+    fn text_changed(&mut self) -> Task<Message> {
+        let Some(ws) = self.active_ws_mut() else {
+            return Task::none();
+        };
+        let ws_id = ws.desc.id.clone();
+        let index = ws.active_tab;
+        let tab = &mut ws.tabs[index];
+        if tab.file_path().is_some() {
+            tab.dirty = true;
+        }
+        tab.generated = false;
+        tab.pristine = None;
+        tab.text_rev += 1;
+        schedule_diagnostics(ws_id, tab.id, tab.text_rev)
+    }
+
+    /// Recalcula a lista de sugestões para o cursor da aba ativa.
+    fn refresh_completion(&mut self, forced: bool) {
+        let Some(ws) = self.active_ws_mut() else {
+            return;
+        };
+        let empty = Catalog::default();
+        let catalog = ws.catalog.as_ref().unwrap_or(&empty);
+        let index = ws.active_tab;
+        let tab = &mut ws.tabs[index];
+        let text = tab.editor.text();
+        let cursor = tab.editor.cursor();
+        let offset = split::byte_offset(&text, cursor.position.line, cursor.position.column);
+        let previous = tab
+            .completion
+            .as_ref()
+            .and_then(|c| c.data.items.get(c.selected).map(|i| i.label.clone()));
+        // Continua ativa enquanto o usuário digita; abrir com Ctrl+Espaço ativa.
+        let active = forced || tab.completion.as_ref().is_some_and(|c| c.active);
+        tab.completion = crate::completion::complete(&text, offset, catalog, forced).map(|data| {
+            let selected = previous
+                .and_then(|label| data.items.iter().position(|i| i.label == label))
+                .unwrap_or(0);
+            state::CompletionState {
+                data,
+                selected,
+                active,
+            }
+        });
+    }
+
+    fn accept_completion(&mut self) -> Task<Message> {
+        let Some(tab) = self.active_tab_mut() else {
+            return Task::none();
+        };
+        let Some(state) = tab.completion.take() else {
+            return Task::none();
+        };
+        let Some(item) = state.data.items.get(state.selected) else {
+            return Task::none();
+        };
+        let text = tab.editor.text();
+        let cursor = tab.editor.cursor();
+        let offset = split::byte_offset(&text, cursor.position.line, cursor.position.column);
+        let typed = text
+            .get(state.data.start..offset)
+            .map_or(0, |t| t.chars().count());
+        for _ in 0..typed {
+            tab.editor
+                .perform(text_editor::Action::Select(text_editor::Motion::Left));
+        }
+        tab.editor
+            .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+                std::sync::Arc::new(item.insert.clone()),
+            )));
+        let focus = operation::focus(tab.editor_id.clone());
+        let diagnose = self.text_changed();
+        Task::batch([focus, diagnose])
     }
 
     /// Executa a seleção; sem seleção, o script inteiro (`whole`) ou a
@@ -1705,6 +1891,16 @@ impl App {
                 }
             }
             Command::QuickOpen => self.open_quick_open(),
+            Command::Complete => {
+                self.refresh_completion(true);
+                if self
+                    .active_ws()
+                    .is_some_and(|w| w.tabs[w.active_tab].completion.is_none())
+                {
+                    self.notify("Nenhuma sugestão para esta posição");
+                }
+                Task::none()
+            }
             Command::NextWorkspace => self.cycle_workspace(1),
             Command::PreviousWorkspace => self.cycle_workspace(-1),
             Command::CloseTab => {
@@ -2463,4 +2659,16 @@ impl App {
         });
         Task::none()
     }
+}
+
+/// Agenda o diagnóstico de sintaxe para daqui a pouco; se o texto mudar
+/// antes, a revisão não confere e o pedido é ignorado.
+fn schedule_diagnostics(ws: WorkspaceId, tab: u64, rev: u64) -> Task<Message> {
+    Task::perform(tokio::time::sleep(Duration::from_millis(400)), move |_| {
+        Message::DiagnoseDue {
+            ws: ws.clone(),
+            tab,
+            rev,
+        }
+    })
 }

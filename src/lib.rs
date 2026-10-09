@@ -2,9 +2,11 @@
 
 pub mod app;
 pub mod commands;
+pub mod completion;
 pub mod connection;
 pub mod data_edit;
 pub mod data_grid;
+pub mod diagnostics;
 pub mod file_explorer;
 pub mod fsutil;
 pub mod metadata;

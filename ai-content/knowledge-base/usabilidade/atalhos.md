@@ -15,7 +15,11 @@ está focado. Fora do editor, só disparam se nenhum widget capturou a tecla.
 | Ctrl+Tab / Ctrl+Shift+Tab | Próximo/anterior workspace (circular) |
 | Ctrl+W | Fechar aba (o Scratch não fecha) |
 | F5 | Recarregar metadados (e a lista de arquivos) |
-| Tab (no editor) | Insere 4 espaços |
+| Ctrl+Espaço | Sugerir tabelas, colunas e palavras-chave |
+| Tab (no editor) | Insere 4 espaços (com a lista de sugestões ativa: aceita) |
+| ↑/↓ (lista aberta) | Ativa a lista e navega entre as sugestões |
+| Enter/Tab (lista ativa) | Aceita a sugestão; com a lista só como dica, mantêm o comportamento normal |
+| Esc (lista aberta) | Fecha as sugestões |
 
 ## Conflitos documentados
 
