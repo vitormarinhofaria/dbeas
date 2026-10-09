@@ -121,10 +121,340 @@ pub async fn write_file(path: PathBuf, contents: String) -> Result<(), String> {
         .map_err(|e| format!("não foi possível salvar {}: {e}", path.display()))
 }
 
+/// Caminho do novo arquivo `name`, relativo a `dir` (o diretório exibido),
+/// que precisa estar dentro de `root` (`sqlFilesDir`). Acrescenta `.sql` se
+/// faltar; recusa caminho absoluto, saída da raiz (por `..` ou link simbólico),
+/// diretório inexistente e arquivo já existente (spec §8).
+pub fn resolve_new_file(root: &Path, dir: &Path, name: &str) -> Result<PathBuf, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("informe o nome do arquivo".into());
+    }
+    if name.ends_with('/') || name.ends_with(std::path::MAIN_SEPARATOR) {
+        return Err("o nome termina em separador de diretório; informe um arquivo".into());
+    }
+    if Path::new(name).is_absolute() {
+        return Err("use um nome relativo ao diretório de arquivos SQL".into());
+    }
+    let root = std::fs::canonicalize(root)
+        .map_err(|e| format!("o diretório de arquivos SQL não está acessível ({e})"))?;
+    let dir = resolve_within(&root, dir).ok_or("o diretório atual está fora do sqlFilesDir")?;
+
+    let mut file = crate::fsutil::normalize(&dir, Path::new(name));
+    if !is_sql(&file) {
+        let mut with_extension = file.into_os_string();
+        with_extension.push(".sql");
+        file = PathBuf::from(with_extension);
+    }
+    if !file.starts_with(&root) {
+        return Err("o arquivo ficaria fora do diretório de arquivos SQL".into());
+    }
+
+    // O diretório de destino precisa existir e, resolvidos os links, continuar
+    // dentro da raiz.
+    let parent = file.parent().ok_or("caminho inválido")?;
+    let parent = std::fs::canonicalize(parent)
+        .map_err(|_| format!("o diretório {} não existe", parent.display()))?;
+    if !parent.starts_with(&root) {
+        return Err("o arquivo ficaria fora do diretório de arquivos SQL".into());
+    }
+    let file = parent.join(file.file_name().ok_or("caminho inválido")?);
+    if file.symlink_metadata().is_ok() {
+        return Err(format!(
+            "já existe um arquivo chamado {}; escolha outro nome",
+            file.file_name().unwrap_or_default().to_string_lossy()
+        ));
+    }
+    Ok(file)
+}
+
+/// Cria um arquivo SQL vazio sem sobrescrever nada: `create_new` falha se o
+/// caminho já existir, mesmo que ele apareça entre a validação e a criação.
+pub async fn create_file(root: PathBuf, dir: PathBuf, name: String) -> Result<PathBuf, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = resolve_new_file(&root, &dir, &name)?;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::AlreadyExists => {
+                    "já existe um arquivo com esse nome; escolha outro".to_string()
+                }
+                _ => format!("não foi possível criar {}: {e}", path.display()),
+            })?;
+        Ok(path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Item (arquivo ou diretório) dentro de `root`, mas não a própria raiz.
+fn managed_item(root: &Path, path: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let root = std::fs::canonicalize(root)
+        .map_err(|e| format!("o diretório de arquivos SQL não está acessível ({e})"))?;
+    // Canonicaliza o diretório pai para não seguir um link no próprio item.
+    let name = path.file_name().ok_or("caminho inválido")?;
+    let parent = path.parent().ok_or("caminho inválido")?;
+    let parent =
+        resolve_within(&root, parent).ok_or("o item está fora do diretório de arquivos SQL")?;
+    let item = parent.join(name);
+    if item == root {
+        return Err("o diretório de arquivos SQL não pode ser alterado".into());
+    }
+    if item.symlink_metadata().is_err() {
+        return Err(format!("{} não existe mais", item.display()));
+    }
+    Ok((root, item))
+}
+
+/// Destino de renomear `path` para `new_name` no mesmo diretório. Arquivos
+/// mantêm a extensão `.sql` (acrescentada se faltar). Recusa nomes com
+/// separador, `.`/`..` e nomes já existentes.
+pub fn resolve_rename(root: &Path, path: &Path, new_name: &str) -> Result<PathBuf, String> {
+    let (_, item) = managed_item(root, path)?;
+    let new_name = new_name.trim();
+    if new_name.is_empty() {
+        return Err("informe o novo nome".into());
+    }
+    if new_name.contains('/') || new_name.contains(std::path::MAIN_SEPARATOR) {
+        return Err("renomear não move entre diretórios; use um nome sem '/'".into());
+    }
+    if new_name == "." || new_name == ".." {
+        return Err("nome inválido".into());
+    }
+    let is_dir = item.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
+    let mut name = new_name.to_string();
+    if !is_dir && !is_sql(Path::new(&name)) {
+        name.push_str(".sql");
+    }
+    let target = item.parent().ok_or("caminho inválido")?.join(&name);
+    if target == item {
+        return Err("o nome é o mesmo".into());
+    }
+    if target.symlink_metadata().is_ok() {
+        return Err(format!(
+            "já existe um item chamado {name}; escolha outro nome"
+        ));
+    }
+    Ok(target)
+}
+
+pub async fn rename(root: PathBuf, path: PathBuf, new_name: String) -> Result<PathBuf, String> {
+    tokio::task::spawn_blocking(move || {
+        let target = resolve_rename(&root, &path, &new_name)?;
+        let (_, item) = managed_item(&root, &path)?;
+        std::fs::rename(&item, &target).map_err(|e| format!("não foi possível renomear: {e}"))?;
+        Ok(target)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Quantidade de arquivos `.sql` dentro de um diretório (recursivo), para a
+/// confirmação de exclusão.
+pub fn count_sql_files(dir: &Path) -> usize {
+    let mut count = 0;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(read) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for entry in read.filter_map(Result::ok) {
+            let Ok(meta) = entry.path().symlink_metadata() else {
+                continue;
+            };
+            if meta.is_dir() {
+                stack.push(entry.path());
+            } else if is_sql(&entry.path()) {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Move o arquivo ou diretório para a lixeira do sistema (recuperável).
+pub async fn move_to_trash(root: PathBuf, path: PathBuf) -> Result<PathBuf, String> {
+    tokio::task::spawn_blocking(move || {
+        let (_, item) = managed_item(&root, &path)?;
+        trash::delete(&item).map_err(|e| format!("não foi possível mover para a lixeira: {e}"))?;
+        Ok(item)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn rename_rules() {
+        let root = tempfile::tempdir().unwrap();
+        let r = fs::canonicalize(root.path()).unwrap();
+        fs::create_dir(r.join("dir")).unwrap();
+        fs::write(r.join("a.sql"), "").unwrap();
+        fs::write(r.join("b.sql"), "").unwrap();
+
+        assert_eq!(
+            resolve_rename(&r, &r.join("a.sql"), "c").unwrap(),
+            r.join("c.sql")
+        );
+        assert_eq!(
+            resolve_rename(&r, &r.join("a.sql"), "c.SQL").unwrap(),
+            r.join("c.SQL")
+        );
+        assert_eq!(
+            resolve_rename(&r, &r.join("dir"), "outro").unwrap(),
+            r.join("outro")
+        );
+        assert!(
+            resolve_rename(&r, &r.join("a.sql"), "b")
+                .unwrap_err()
+                .contains("já existe")
+        );
+        assert!(resolve_rename(&r, &r.join("a.sql"), "dir/x").is_err());
+        assert!(resolve_rename(&r, &r.join("a.sql"), "..").is_err());
+        assert!(resolve_rename(&r, &r.join("a.sql"), " ").is_err());
+        assert!(
+            resolve_rename(&r, &r.join("a.sql"), "a")
+                .unwrap_err()
+                .contains("mesmo")
+        );
+        assert!(resolve_rename(&r, &r, "x").is_err());
+        assert!(
+            resolve_rename(&r, &r.join("sumiu.sql"), "x")
+                .unwrap_err()
+                .contains("não existe")
+        );
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("f.sql"), "").unwrap();
+        assert!(resolve_rename(&r, &outside.path().join("f.sql"), "x").is_err());
+    }
+
+    #[tokio::test]
+    async fn renames_on_disk() {
+        let root = tempfile::tempdir().unwrap();
+        let r = fs::canonicalize(root.path()).unwrap();
+        fs::write(r.join("a.sql"), "x").unwrap();
+        let target = rename(r.clone(), r.join("a.sql"), "b".into())
+            .await
+            .unwrap();
+        assert_eq!(fs::read_to_string(target).unwrap(), "x");
+        assert!(!r.join("a.sql").exists());
+    }
+
+    #[test]
+    fn counts_sql_files_recursively() {
+        let root = tempfile::tempdir().unwrap();
+        let r = root.path();
+        fs::create_dir_all(r.join("x/y")).unwrap();
+        fs::write(r.join("x/a.sql"), "").unwrap();
+        fs::write(r.join("x/y/b.sql"), "").unwrap();
+        fs::write(r.join("x/notas.txt"), "").unwrap();
+        assert_eq!(count_sql_files(&r.join("x")), 2);
+    }
+
+    #[test]
+    fn trash_refuses_root_and_outside_items() {
+        let root = tempfile::tempdir().unwrap();
+        let r = fs::canonicalize(root.path()).unwrap();
+        assert!(managed_item(&r, &r).is_err());
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("f.sql"), "").unwrap();
+        assert!(managed_item(&r, &outside.path().join("f.sql")).is_err());
+        // Um link dentro da raiz é tratado como item próprio (não segue o destino).
+        std::os::unix::fs::symlink(outside.path(), r.join("link")).unwrap();
+        assert_eq!(managed_item(&r, &r.join("link")).unwrap().1, r.join("link"));
+    }
+
+    #[test]
+    fn new_file_names_resolve_inside_root() {
+        let root = tempfile::tempdir().unwrap();
+        let r = fs::canonicalize(root.path()).unwrap();
+        fs::create_dir(r.join("sub")).unwrap();
+        fs::write(r.join("existe.sql"), "").unwrap();
+
+        assert_eq!(
+            resolve_new_file(&r, &r, "consulta").unwrap(),
+            r.join("consulta.sql")
+        );
+        assert_eq!(
+            resolve_new_file(&r, &r, " a.SQL ").unwrap(),
+            r.join("a.SQL")
+        );
+        assert_eq!(
+            resolve_new_file(&r, &r, "notas.txt").unwrap(),
+            r.join("notas.txt.sql")
+        );
+        assert_eq!(
+            resolve_new_file(&r, &r.join("sub"), "x").unwrap(),
+            r.join("sub").join("x.sql")
+        );
+        assert_eq!(
+            resolve_new_file(&r, &r, "sub/y").unwrap(),
+            r.join("sub").join("y.sql")
+        );
+        assert_eq!(
+            resolve_new_file(&r, &r.join("sub"), "../z").unwrap(),
+            r.join("z.sql")
+        );
+    }
+
+    #[test]
+    fn new_file_rejects_escapes_conflicts_and_bad_names() {
+        let root = tempfile::tempdir().unwrap();
+        let r = fs::canonicalize(root.path()).unwrap();
+        fs::write(r.join("existe.sql"), "").unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), r.join("link")).unwrap();
+
+        assert!(resolve_new_file(&r, &r, "").is_err());
+        assert!(resolve_new_file(&r, &r, "   ").is_err());
+        assert!(resolve_new_file(&r, &r, "dir/").is_err());
+        assert!(resolve_new_file(&r, &r, "/tmp/x").is_err());
+        assert!(
+            resolve_new_file(&r, &r, "../fora")
+                .unwrap_err()
+                .contains("fora do diretório")
+        );
+        assert!(
+            resolve_new_file(&r, &r, "link/x")
+                .unwrap_err()
+                .contains("fora do diretório")
+        );
+        assert!(
+            resolve_new_file(&r, &r, "nao/existe/x")
+                .unwrap_err()
+                .contains("não existe")
+        );
+        assert!(
+            resolve_new_file(&r, &r, "existe")
+                .unwrap_err()
+                .contains("já existe")
+        );
+        assert!(resolve_new_file(&r, &r, "EXISTE.sql").is_ok() || cfg!(target_os = "macos"));
+    }
+
+    #[tokio::test]
+    async fn create_file_never_overwrites() {
+        let root = tempfile::tempdir().unwrap();
+        let r = fs::canonicalize(root.path()).unwrap();
+        let created = create_file(r.clone(), r.clone(), "novo".into())
+            .await
+            .unwrap();
+        assert_eq!(created, r.join("novo.sql"));
+        assert_eq!(fs::read_to_string(&created).unwrap(), "");
+        fs::write(&created, "conteúdo").unwrap();
+        assert!(
+            create_file(r.clone(), r.clone(), "novo".into())
+                .await
+                .is_err()
+        );
+        assert_eq!(fs::read_to_string(&created).unwrap(), "conteúdo");
+    }
 
     #[test]
     fn lists_sql_files_and_dirs_only() {

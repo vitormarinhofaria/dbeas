@@ -20,3 +20,14 @@ problema ao abrir modais e o Ctrl+P (perdia foco e rolagens). Corrigido em
 **Teste de interface:** o ambiente é KDE/Wayland. Teclas sintéticas via XTEST
 (app rodando com `env -u WAYLAND_DISPLAY WINIT_UNIX_BACKEND=x11`) disparam o
 diálogo de permissão "Controle remoto" do KDE — precisa de aprovação do usuário.
+
+## Capturas de tela para verificação
+
+- `spectacle -a` captura a **janela ativa**: se o usuário estiver em outro
+  programa, captura a tela dele. Não usar sem a janela do DBeas em foco; nunca usar
+  `spectacle -r` (espera seleção do usuário e trava).
+- Preferir captura interna num gancho temporário: `window::latest()
+  .and_then(window::screenshot)` grava `Screenshot.rgba` (converter com PIL). A
+  captura reflete o último quadro apresentado: espere (~400 ms), capture uma vez,
+  espere de novo e use a segunda captura; antes disso o texto de widgets recém-
+  criados pode sair em branco.

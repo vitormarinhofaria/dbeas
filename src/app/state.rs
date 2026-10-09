@@ -48,6 +48,8 @@ pub struct Workspace {
 pub struct FilesState {
     pub current_dir: Option<PathBuf>,
     pub entries: Option<Result<Vec<FileEntry>, String>>,
+    /// Item com o menu de contexto aberto (clique direito).
+    pub menu: Option<FileEntry>,
 }
 
 impl Workspace {

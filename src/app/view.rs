@@ -365,7 +365,12 @@ impl App {
             } else {
                 text::default
             };
-            bar = bar.push(text(&notice.text).size(13).style(style));
+            bar = bar.push(
+                text(&notice.text)
+                    .size(13)
+                    .style(style)
+                    .wrapping(text::Wrapping::None),
+            );
             bar = bar.push(
                 button(text("×").size(13))
                     .on_press(Message::DismissNotice)
@@ -376,12 +381,18 @@ impl App {
         bar = bar.push(space::horizontal());
         if let Some(ws) = self.active_ws() {
             if let Some(path) = ws.tabs[ws.active_tab].file_path() {
-                bar = bar.push(text(path.display().to_string()).size(12).style(muted));
+                bar = bar.push(
+                    text(super::display_path(ws, path))
+                        .size(12)
+                        .style(muted)
+                        .wrapping(text::Wrapping::None),
+                );
             }
             let lsp = tooltip(
                 text("sintaxe: parser do PostgreSQL · autocomplete: catálogo")
                     .size(12)
-                    .style(muted),
+                    .style(muted)
+                    .wrapping(text::Wrapping::None),
                 container(
                     text(
                         "Diagnóstico de sintaxe com o parser do PostgreSQL (libpg_query), sem consultar o \
@@ -407,6 +418,7 @@ impl App {
         container(bar)
             .padding([4, 12])
             .width(Length::Fill)
+            .clip(true)
             .style(panel)
             .into()
     }
@@ -497,6 +509,144 @@ impl App {
                         button(text(if *running { "Executando…" } else { "Executar e fechar" }))
                             .on_press_maybe((!*running && !*needs_transaction).then_some(Message::GridSaveExecute))
                             .style(button::success),
+                    ]
+                    .spacing(8),
+                )
+                .into()
+            }
+            Modal::RenameItem {
+                entry,
+                name,
+                error,
+                input_id,
+                busy,
+            } => {
+                let kind = if entry.is_dir { "diretório" } else { "arquivo" };
+                let mut col = column![
+                    text(format!("Renomear {kind}")).size(18).font(BOLD),
+                    text(format!(
+                        "{} — o item continua no mesmo diretório.{}",
+                        entry.name,
+                        if entry.is_dir { "" } else { " A extensão .sql é mantida." }
+                    ))
+                    .size(13)
+                    .style(muted),
+                    text_input("novo nome", name)
+                        .id(input_id.clone())
+                        .on_input(Message::RenameName)
+                        .on_submit(Message::RenameSubmit),
+                ]
+                .spacing(10);
+                if let Some(e) = error {
+                    col = col.push(text(e).size(13).style(danger_text));
+                }
+                col.push(
+                    row![
+                        space::horizontal(),
+                        button(text("Cancelar"))
+                            .on_press(Message::CloseModal)
+                            .style(button::secondary),
+                        button(text(if *busy { "Renomeando…" } else { "Renomear" }))
+                            .on_press_maybe((!*busy).then_some(Message::RenameSubmit)),
+                    ]
+                    .spacing(8),
+                )
+                .into()
+            }
+            Modal::DeleteItem {
+                entry,
+                sql_files,
+                open_tabs,
+                unsaved,
+                error,
+                busy,
+            } => {
+                let what = if entry.is_dir {
+                    format!(
+                        "O diretório {} e todo o seu conteúdo ({sql_files} arquivo(s) .sql) serão movidos para a lixeira.",
+                        entry.name
+                    )
+                } else {
+                    format!("O arquivo {} será movido para a lixeira.", entry.name)
+                };
+                let mut col = column![
+                    text("Excluir").size(18).font(BOLD),
+                    text(what).size(13),
+                    text("A lixeira do sistema permite recuperá-lo depois.").size(12).style(muted),
+                ]
+                .spacing(10);
+                if !open_tabs.is_empty() {
+                    col = col.push(
+                        text(format!("Abas que serão fechadas: {}", open_tabs.join(", "))).size(13),
+                    );
+                }
+                if *unsaved {
+                    col = col.push(
+                        text("Há alterações não salvas nessas abas; elas serão descartadas.")
+                            .size(13)
+                            .style(danger_text),
+                    );
+                }
+                if let Some(e) = error {
+                    col = col.push(text(e).size(13).style(danger_text));
+                }
+                col.push(
+                    row![
+                        space::horizontal(),
+                        button(text("Cancelar"))
+                            .on_press(Message::CloseModal)
+                            .style(button::secondary),
+                        button(text(if *busy { "Excluindo…" } else { "Mover para a lixeira" }))
+                            .on_press_maybe((!*busy).then_some(Message::DeleteConfirm))
+                            .style(button::danger),
+                    ]
+                    .spacing(8),
+                )
+                .into()
+            }
+            Modal::NewFile {
+                dir,
+                name,
+                error,
+                input_id,
+                creating,
+            } => {
+                let preview = if name.trim().is_empty() {
+                    String::new()
+                } else {
+                    let trimmed = name.trim();
+                    let lower = trimmed.to_ascii_lowercase();
+                    if lower.ends_with(".sql") {
+                        format!("{dir}/{trimmed}")
+                    } else {
+                        format!("{dir}/{trimmed}.sql")
+                    }
+                };
+                let mut col = column![
+                    text("Novo arquivo SQL").size(18).font(BOLD),
+                    text(format!("Criado em {dir} (relativo ao sqlFilesDir). A extensão .sql é acrescentada se faltar."))
+                        .size(13)
+                        .style(muted),
+                    text_input("consulta.sql", name)
+                        .id(input_id.clone())
+                        .on_input(Message::NewFileName)
+                        .on_submit(Message::NewFileSubmit),
+                ]
+                .spacing(10);
+                if !preview.is_empty() {
+                    col = col.push(text(preview).size(12).font(Font::MONOSPACE).style(muted));
+                }
+                if let Some(e) = error {
+                    col = col.push(text(e).size(13).style(danger_text));
+                }
+                col.push(
+                    row![
+                        space::horizontal(),
+                        button(text("Cancelar"))
+                            .on_press(Message::CloseModal)
+                            .style(button::secondary),
+                        button(text(if *creating { "Criando…" } else { "Criar" }))
+                            .on_press_maybe((!*creating).then_some(Message::NewFileSubmit)),
                     ]
                     .spacing(8),
                 )
@@ -1017,14 +1167,25 @@ fn files_explorer(ws: &Workspace) -> Element<'_, Message> {
         .ok()
         .and_then(|c| c.sql_files_dir.clone());
     let Some(root) = root else {
-        return text("Nenhum diretório configurado (sqlFilesDir).")
-            .size(13)
-            .style(muted)
-            .into();
+        return column![
+            new_file_button(Some("Nenhum diretório configurado (sqlFilesDir).")),
+            text("Nenhum diretório configurado (sqlFilesDir).")
+                .size(13)
+                .style(muted),
+        ]
+        .spacing(6)
+        .into();
     };
     let entries = match &ws.files.entries {
         None => return text("Carregando…").size(13).style(muted).into(),
-        Some(Err(e)) => return text(e).size(13).style(danger_text).into(),
+        Some(Err(e)) => {
+            return column![
+                new_file_button(Some(e.as_str())),
+                text(e).size(13).style(danger_text),
+            ]
+            .spacing(6)
+            .into();
+        }
         Some(Ok(entries)) => entries,
     };
 
@@ -1037,12 +1198,6 @@ fn files_explorer(ws: &Workspace) -> Element<'_, Message> {
         .unwrap_or_default();
 
     let mut list = Column::new().spacing(1);
-    list = list.push(
-        text(format!("/{relative}"))
-            .size(12)
-            .font(Font::MONOSPACE)
-            .style(muted),
-    );
     if canonical_current != canonical_root {
         if let Some(parent) = canonical_current.parent() {
             list = list.push(object_button(
@@ -1058,12 +1213,107 @@ fn files_explorer(ws: &Workspace) -> Element<'_, Message> {
         } else {
             ("▤", Message::OpenFile(e.path.clone()))
         };
-        list = list.push(object_button(icon, e.name.clone(), Some(msg)));
+        let menu_open = ws.files.menu.as_ref().is_some_and(|m| m.path == e.path);
+        let item = mouse_area(object_button(icon, e.name.clone(), Some(msg)))
+            .on_right_press(Message::FileMenu(e.clone()));
+        list = list.push(container(item).style(move |theme: &Theme| {
+            if menu_open {
+                container::Style {
+                    background: Some(theme.extended_palette().background.weak.color.into()),
+                    ..container::Style::default()
+                }
+            } else {
+                container::Style::default()
+            }
+        }));
+        if menu_open {
+            list = list.push(file_menu());
+        }
     }
     if entries.is_empty() {
         list = list.push(text("Nenhum arquivo .sql aqui.").size(13).style(muted));
     }
-    scrollable(list).height(Length::Fill).into()
+    column![
+        row![
+            text(format!("/{relative}"))
+                .size(12)
+                .font(Font::MONOSPACE)
+                .style(muted)
+                .width(Length::Fill),
+            new_file_button(None),
+        ]
+        .align_y(Alignment::Center),
+        scrollable(list).height(Length::Fill),
+    ]
+    .spacing(4)
+    .into()
+}
+
+/// Menu de contexto de um arquivo/diretório, exibido logo abaixo do item.
+fn file_menu<'a>() -> Element<'a, Message> {
+    let entry = |label: &'static str, message: Message, danger: bool| {
+        button(text(label).size(13))
+            .on_press(message)
+            .width(Length::Fill)
+            .padding([3, 10])
+            .style(move |theme: &Theme, status| {
+                let p = theme.extended_palette();
+                button::Style {
+                    background: matches!(status, button::Status::Hovered)
+                        .then(|| p.background.weak.color.into()),
+                    text_color: if danger {
+                        p.danger.strong.color
+                    } else {
+                        p.background.base.text
+                    },
+                    ..button::Style::default()
+                }
+            })
+    };
+    row![
+        Space::new().width(18),
+        container(
+            column![
+                entry("Renomear…", Message::RenameDialog, false),
+                entry("Excluir…", Message::DeleteDialog, true),
+            ]
+            .width(160),
+        )
+        .padding(2)
+        .style(|theme: &Theme| {
+            let p = theme.extended_palette();
+            container::Style {
+                background: Some(p.background.weaker.color.into()),
+                border: iced::Border {
+                    color: p.background.strong.color,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..container::Style::default()
+            }
+        }),
+    ]
+    .into()
+}
+
+/// Botão "Novo arquivo"; com `unavailable`, aparece desabilitado e explica o motivo.
+fn new_file_button(unavailable: Option<&str>) -> Element<'_, Message> {
+    let button = button(text("+ Novo arquivo").size(12))
+        .padding([2, 8])
+        .style(button::secondary)
+        .on_press_maybe(unavailable.is_none().then_some(Message::NewFileDialog));
+    match unavailable {
+        None => button.into(),
+        Some(reason) => tooltip(
+            button,
+            container(text(format!("Indisponível: {reason}")).size(12))
+                .padding(6)
+                .max_width(320)
+                .style(container::rounded_box),
+            tooltip::Position::Bottom,
+        )
+        .into(),
+    }
 }
 
 fn object_button<'a>(
@@ -1091,13 +1341,23 @@ fn results_panel<'a>(ws: &'a Workspace, tab: &'a Tab) -> Element<'a, Message> {
     let can_run = ws.connection.is_some() && !run.running;
 
     let mut toolbar = row![
-        button(text("▶ Executar").size(13))
-            .on_press_maybe(can_run.then_some(Message::Command(Command::ExecuteCurrent)))
-            .padding([3, 10]),
-        button(text("Script").size(13))
-            .on_press_maybe(can_run.then_some(Message::Command(Command::ExecuteScript)))
-            .padding([3, 10])
-            .style(button::secondary),
+        hint(
+            button(text("▶ Executar").size(13))
+                .on_press_maybe(can_run.then_some(Message::Command(Command::ExecuteCurrent)))
+                .padding([3, 10]),
+            "Executa o texto selecionado ou, sem seleção, apenas a instrução onde está o \
+             cursor (delimitada por ;).",
+            "Ctrl+Enter",
+        ),
+        hint(
+            button(text("Script").size(13))
+                .on_press_maybe(can_run.then_some(Message::Command(Command::ExecuteScript)))
+                .padding([3, 10])
+                .style(button::secondary),
+            "Executa todas as instruções do editor, em ordem, parando no primeiro erro. A \
+             grade mostra o resultado da última instrução que retornar linhas.",
+            "Ctrl+Shift+Enter",
+        ),
     ]
     .spacing(6)
     .align_y(Alignment::Center);
@@ -1237,6 +1497,29 @@ fn results_panel<'a>(ws: &'a Workspace, tab: &'a Tab) -> Element<'a, Message> {
         .into(),
     };
     col.push(grid).height(Length::Fill).into()
+}
+
+/// Tooltip descritivo de um botão, com o atalho de teclado equivalente.
+fn hint<'a>(
+    content: impl Into<Element<'a, Message>>,
+    description: &'a str,
+    shortcut: &'a str,
+) -> Element<'a, Message> {
+    tooltip(
+        content,
+        container(
+            column![
+                text(description).size(12),
+                text(format!("Atalho: {shortcut}")).size(12).font(BOLD),
+            ]
+            .spacing(4),
+        )
+        .padding(8)
+        .max_width(320)
+        .style(container::rounded_box),
+        tooltip::Position::Bottom,
+    )
+    .into()
 }
 
 /// Barra de edição: alvo editável, célula selecionada e pendências.

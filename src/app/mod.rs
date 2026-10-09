@@ -101,6 +101,34 @@ pub enum Modal {
     RunFileInTransaction {
         title: String,
     },
+    /// Novo nome de um arquivo ou diretório.
+    RenameItem {
+        entry: FileEntry,
+        name: String,
+        error: Option<String>,
+        input_id: iced::widget::Id,
+        busy: bool,
+    },
+    /// Confirmação de exclusão (move para a lixeira).
+    DeleteItem {
+        entry: FileEntry,
+        /// Arquivos `.sql` dentro do diretório.
+        sql_files: usize,
+        /// Abas abertas que serão fechadas, e se alguma tem alterações.
+        open_tabs: Vec<String>,
+        unsaved: bool,
+        error: Option<String>,
+        busy: bool,
+    },
+    /// Nome do novo arquivo SQL. `dir` é o diretório exibido, relativo ao
+    /// `sqlFilesDir` (para exibição).
+    NewFile {
+        dir: String,
+        name: String,
+        error: Option<String>,
+        input_id: iced::widget::Id,
+        creating: bool,
+    },
     /// SQL das alterações da grade, antes de executar (Ctrl+S).
     GridSave {
         tab: u64,
@@ -182,6 +210,19 @@ pub enum Message {
         name: String,
     },
     NavigateDir(PathBuf),
+    FileMenu(FileEntry),
+    CloseFileMenu,
+    RenameDialog,
+    RenameName(String),
+    RenameSubmit,
+    Renamed(WorkspaceId, PathBuf, Result<PathBuf, String>),
+    DeleteDialog,
+    DeleteConfirm,
+    Deleted(WorkspaceId, Result<PathBuf, String>),
+    NewFileDialog,
+    NewFileName(String),
+    NewFileSubmit,
+    FileCreated(WorkspaceId, Result<PathBuf, String>),
     FilesListed(WorkspaceId, PathBuf, Result<Vec<FileEntry>, String>),
     OpenFile(PathBuf),
     FileRead {
@@ -362,6 +403,12 @@ impl App {
                     captured: status == event::Status::Captured,
                 }),
                 Event::Window(window::Event::Resized(size)) => Some(Message::WindowResized(size)),
+                // Clique fora de qualquer widget fecha o menu de contexto.
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                    if status == event::Status::Ignored =>
+                {
+                    Some(Message::CloseFileMenu)
+                }
                 _ => None,
             }),
             window::close_requests().map(Message::CloseRequested),
@@ -435,8 +482,16 @@ impl App {
                 | Message::EditorScrolled(_)
                 | Message::GridScrolled(_)
                 | Message::KeyPressed { .. }
+                | Message::CloseFileMenu
+                | Message::FileMenu(_)
         ) {
             self.session_dirty = true;
+        }
+
+        if closes_file_menu(&message) {
+            if let Some(ws) = self.active_ws_mut() {
+                ws.files.menu = None;
+            }
         }
 
         if let Message::Executed { ws, .. } | Message::Fetched { ws, .. } = &message {
@@ -684,6 +739,288 @@ impl App {
             }
             Message::OpenRelation { schema, name } => self.open_relation(&schema, &name),
             Message::NavigateDir(dir) => self.list_files(Some(dir)),
+            Message::FileMenu(entry) => {
+                if let Some(ws) = self.active_ws_mut() {
+                    ws.files.menu = Some(entry);
+                }
+                Task::none()
+            }
+            Message::CloseFileMenu => {
+                if let Some(ws) = self.active_ws_mut() {
+                    ws.files.menu = None;
+                }
+                Task::none()
+            }
+            Message::RenameDialog => {
+                let Some(entry) = self.active_ws_mut().and_then(|w| w.files.menu.take()) else {
+                    return Task::none();
+                };
+                let input_id = iced::widget::Id::unique();
+                self.modal = Some(Modal::RenameItem {
+                    name: entry.name.clone(),
+                    entry,
+                    error: None,
+                    input_id: input_id.clone(),
+                    busy: false,
+                });
+                Task::batch([
+                    operation::focus(input_id.clone()),
+                    operation::select_all(input_id),
+                ])
+            }
+            Message::RenameName(value) => {
+                if let Some(Modal::RenameItem { name, error, .. }) = &mut self.modal {
+                    *name = value;
+                    *error = None;
+                }
+                Task::none()
+            }
+            Message::RenameSubmit => {
+                let Some((root, _)) = self.files_location() else {
+                    return Task::none();
+                };
+                let id = self
+                    .active_ws()
+                    .map(|w| w.desc.id.clone())
+                    .expect("workspace ativo");
+                let Some(Modal::RenameItem {
+                    entry,
+                    name,
+                    busy,
+                    error,
+                    ..
+                }) = &mut self.modal
+                else {
+                    return Task::none();
+                };
+                if *busy {
+                    return Task::none();
+                }
+                *busy = true;
+                *error = None;
+                let old = entry.path.clone();
+                Task::perform(
+                    file_explorer::rename(root, old.clone(), name.clone()),
+                    move |r| Message::Renamed(id.clone(), old.clone(), r),
+                )
+            }
+            Message::Renamed(id, old, result) => match result {
+                Ok(new) => {
+                    if matches!(self.modal, Some(Modal::RenameItem { .. })) {
+                        self.modal = None;
+                    }
+                    let Some(ws) = self.ws_by_id(&id) else {
+                        return Task::none();
+                    };
+                    // Abas e diretório atual acompanham o novo caminho.
+                    let moved = |p: &PathBuf| p.strip_prefix(&old).ok().map(|rest| new.join(rest));
+                    for tab in &mut ws.tabs {
+                        if let TabKind::File { path, .. } = &mut tab.kind {
+                            if let Some(updated) = moved(path) {
+                                *path = updated;
+                            }
+                        }
+                    }
+                    if let Some(dir) = ws.files.current_dir.as_mut() {
+                        if let Some(updated) =
+                            std::fs::canonicalize(&*dir).ok().as_ref().and_then(moved)
+                        {
+                            *dir = updated;
+                        }
+                    }
+                    let shown = display_path(ws, &new);
+                    self.notify(format!("Renomeado para {shown}"));
+                    self.list_files(None)
+                }
+                Err(e) => {
+                    if let Some(Modal::RenameItem { error, busy, .. }) = &mut self.modal {
+                        *error = Some(e);
+                        *busy = false;
+                    } else {
+                        self.notify_error(e);
+                    }
+                    Task::none()
+                }
+            },
+            Message::DeleteDialog => {
+                let Some(ws) = self.active_ws_mut() else {
+                    return Task::none();
+                };
+                let Some(entry) = ws.files.menu.take() else {
+                    return Task::none();
+                };
+                let affected: Vec<&Tab> = ws
+                    .tabs
+                    .iter()
+                    .filter(|t| t.file_path().is_some_and(|p| p.starts_with(&entry.path)))
+                    .collect();
+                let open_tabs = affected.iter().map(|t| t.title()).collect();
+                let unsaved = affected.iter().any(|t| t.dirty);
+                let sql_files = if entry.is_dir {
+                    file_explorer::count_sql_files(&entry.path)
+                } else {
+                    1
+                };
+                self.modal = Some(Modal::DeleteItem {
+                    entry,
+                    sql_files,
+                    open_tabs,
+                    unsaved,
+                    error: None,
+                    busy: false,
+                });
+                Task::none()
+            }
+            Message::DeleteConfirm => {
+                let Some((root, _)) = self.files_location() else {
+                    return Task::none();
+                };
+                let id = self
+                    .active_ws()
+                    .map(|w| w.desc.id.clone())
+                    .expect("workspace ativo");
+                let Some(Modal::DeleteItem {
+                    entry, busy, error, ..
+                }) = &mut self.modal
+                else {
+                    return Task::none();
+                };
+                if *busy {
+                    return Task::none();
+                }
+                *busy = true;
+                *error = None;
+                Task::perform(
+                    file_explorer::move_to_trash(root, entry.path.clone()),
+                    move |r| Message::Deleted(id.clone(), r),
+                )
+            }
+            Message::Deleted(id, result) => match result {
+                Ok(removed) => {
+                    if matches!(self.modal, Some(Modal::DeleteItem { .. })) {
+                        self.modal = None;
+                    }
+                    let Some(ws) = self.ws_by_id(&id) else {
+                        return Task::none();
+                    };
+                    // Fecha as abas dos arquivos removidos (o Scratch nunca é afetado).
+                    let active_id = ws.tabs.get(ws.active_tab).map(|t| t.id);
+                    ws.tabs
+                        .retain(|t| !t.file_path().is_some_and(|p| p.starts_with(&removed)));
+                    ws.active_tab = active_id
+                        .and_then(|id| ws.tabs.iter().position(|t| t.id == id))
+                        .unwrap_or(0);
+                    let current_removed = ws
+                        .files
+                        .current_dir
+                        .as_ref()
+                        .and_then(|d| std::fs::canonicalize(d).ok())
+                        .is_none_or(|d| d.starts_with(&removed));
+                    if current_removed {
+                        ws.files.current_dir = None;
+                    }
+                    let shown = display_path(ws, &removed);
+                    self.notify(format!("{shown} movido para a lixeira"));
+                    self.list_files(None)
+                }
+                Err(e) => {
+                    if let Some(Modal::DeleteItem { error, busy, .. }) = &mut self.modal {
+                        *error = Some(e);
+                        *busy = false;
+                    } else {
+                        self.notify_error(e);
+                    }
+                    Task::none()
+                }
+            },
+            Message::NewFileDialog => {
+                let Some((root, dir)) = self.files_location() else {
+                    self.notify_error("Nenhum diretório de arquivos SQL configurado (sqlFilesDir)");
+                    return Task::none();
+                };
+                let root = std::fs::canonicalize(&root).unwrap_or(root);
+                let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
+                let relative = dir
+                    .strip_prefix(&root)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                let input_id = iced::widget::Id::unique();
+                self.modal = Some(Modal::NewFile {
+                    dir: if relative.is_empty() {
+                        ".".into()
+                    } else {
+                        format!("./{relative}")
+                    },
+                    name: String::new(),
+                    error: None,
+                    input_id: input_id.clone(),
+                    creating: false,
+                });
+                operation::focus(input_id)
+            }
+            Message::NewFileName(value) => {
+                if let Some(Modal::NewFile { name, error, .. }) = &mut self.modal {
+                    *name = value;
+                    *error = None;
+                }
+                Task::none()
+            }
+            Message::NewFileSubmit => {
+                let Some((root, dir)) = self.files_location() else {
+                    return Task::none();
+                };
+                let Some(Modal::NewFile {
+                    name,
+                    creating,
+                    error,
+                    ..
+                }) = &mut self.modal
+                else {
+                    return Task::none();
+                };
+                if *creating {
+                    return Task::none();
+                }
+                *creating = true;
+                *error = None;
+                let name = name.clone();
+                let id = self
+                    .active_ws()
+                    .map(|w| w.desc.id.clone())
+                    .expect("workspace ativo");
+                Task::perform(file_explorer::create_file(root, dir, name), move |r| {
+                    Message::FileCreated(id.clone(), r)
+                })
+            }
+            Message::FileCreated(id, result) => match result {
+                Ok(path) => {
+                    if matches!(self.modal, Some(Modal::NewFile { .. })) {
+                        self.modal = None;
+                    }
+                    if self.active_ws().is_none_or(|w| w.desc.id != id) {
+                        return Task::none();
+                    }
+                    let shown = self
+                        .active_ws()
+                        .map(|w| display_path(w, &path))
+                        .unwrap_or_default();
+                    self.notify(format!("Arquivo {shown} criado"));
+                    // Atualiza a listagem e abre o arquivo; nada é executado.
+                    Task::batch([self.list_files(None), self.open_file(path)])
+                }
+                Err(e) => {
+                    if let Some(Modal::NewFile {
+                        error, creating, ..
+                    }) = &mut self.modal
+                    {
+                        *error = Some(e);
+                        *creating = false;
+                    } else {
+                        self.notify_error(e);
+                    }
+                    Task::none()
+                }
+            },
             Message::FilesListed(id, dir, result) => {
                 if let Some(ws) = self.ws_by_id(&id) {
                     if result.is_ok() || ws.files.current_dir.is_none() {
@@ -1331,6 +1668,14 @@ impl App {
 
     // ------------------------------------------------------------------
     // Exploradores e abertura de abas
+
+    /// `sqlFilesDir` do workspace ativo e o diretório exibido no explorador.
+    fn files_location(&self) -> Option<(PathBuf, PathBuf)> {
+        let ws = self.active_ws()?;
+        let root = ws.desc.config.as_ref().ok()?.sql_files_dir.clone()?;
+        let dir = ws.files.current_dir.clone().unwrap_or_else(|| root.clone());
+        Some((root, dir))
+    }
 
     fn list_files(&mut self, dir: Option<PathBuf>) -> Task<Message> {
         let Some(ws) = self.active_ws_mut() else {
@@ -1982,6 +2327,11 @@ impl App {
             return Task::none();
         }
         if matches!(key.as_ref(), Key::Named(key::Named::Escape)) {
+            if let Some(ws) = self.active_ws_mut() {
+                if ws.files.menu.take().is_some() {
+                    return Task::none();
+                }
+            }
             if let Some(tab) = self.active_tab_mut() {
                 if tab.editing.take().is_some() {
                     return Task::none();
@@ -2014,6 +2364,44 @@ impl App {
         session.active_workspace = self.active_ws().map(|w| w.desc.id.clone());
         session.layout.sidebar_width = self.sidebar_width;
         session
+    }
+}
+
+/// Interações que fecham o menu de contexto do explorador de arquivos.
+fn closes_file_menu(message: &Message) -> bool {
+    matches!(
+        message,
+        Message::Editor(_)
+            | Message::SelectTab(_)
+            | Message::CloseTab(_)
+            | Message::SelectWorkspace(_)
+            | Message::SetExplorer(_)
+            | Message::NavigateDir(_)
+            | Message::OpenFile(_)
+            | Message::OpenRelation { .. }
+            | Message::Command(_)
+            | Message::DragStart(_)
+            | Message::StartEdit(..)
+            | Message::SelectCell(..)
+            | Message::HeaderPressed(_)
+            | Message::NewFileDialog
+            | Message::FilesListed(..)
+    )
+}
+
+/// Caminho de um arquivo para exibição: relativo ao `sqlFilesDir` do
+/// workspace quando estiver dentro dele, senão o caminho completo.
+pub(crate) fn display_path(ws: &Workspace, path: &std::path::Path) -> String {
+    let root = ws
+        .desc
+        .config
+        .as_ref()
+        .ok()
+        .and_then(|c| c.sql_files_dir.as_ref())
+        .and_then(|r| std::fs::canonicalize(r).ok());
+    match root.as_ref().and_then(|r| path.strip_prefix(r).ok()) {
+        Some(relative) => relative.display().to_string(),
+        None => path.display().to_string(),
     }
 }
 

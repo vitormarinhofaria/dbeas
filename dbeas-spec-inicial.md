@@ -201,7 +201,7 @@ Abaixo ou junto à seleção de workspace, oferecer modos alternáveis:
     segurança; categorias ainda não implementadas não devem aparecer
     como funcionais.
 3.  **Arquivos SQL:** explorador iniciado em `sqlFilesDir`. Permite
-    navegar, abrir, editar, salvar e executar arquivos `.sql`.
+    navegar, criar, abrir, editar, salvar e executar arquivos `.sql`.
 
 A troca do modo de exploração não deve fechar nem alterar as abas
 abertas.
@@ -413,6 +413,23 @@ Quando `requireTransaction: true`:
 -   O explorador começa em `sqlFilesDir` do workspace ativo.
 -   Permitir navegar por diretórios, abrir arquivos `.sql`, editar,
     salvar e executar o conteúdo ou a seleção.
+-   Oferecer a opção de criar um novo arquivo SQL, tendo como base o
+    diretório de arquivos da configuração do workspace (`sqlFilesDir`,
+    resolvido a partir do diretório do `dbeas.json`):
+    -   o usuário informa o nome do arquivo; caminho relativo é
+        resolvido dentro de `sqlFilesDir`, partindo do diretório
+        exibido no explorador;
+    -   acrescentar a extensão `.sql` quando ela não for informada;
+    -   o arquivo deve ficar dentro de `sqlFilesDir`; nomes que
+        resultem em caminho fora dele (por `..`, caminho absoluto ou
+        link simbólico) devem ser recusados com mensagem clara;
+    -   não sobrescrever arquivo existente: informar o conflito e
+        permitir escolher outro nome;
+    -   após criar, abrir o arquivo em uma nova aba do editor e
+        atualizar a listagem do explorador; o arquivo não deve ser
+        executado automaticamente;
+    -   se `sqlFilesDir` não estiver configurado ou não estiver
+        acessível, a opção deve aparecer indisponível, com o motivo.
 -   Indicar alterações não salvas.
 -   Lidar com diretórios ausentes ou inacessíveis exibindo uma mensagem
     útil, sem impedir o restante do workspace.
@@ -556,7 +573,7 @@ mensagens de resultado para atualizar o estado.
 10. `readOnly` impede operações de escrita iniciadas pela UI;
     `requireTransaction` oferece um fluxo explícito de
     confirmação/reversão.
-11. É possível abrir, editar, salvar e executar arquivos SQL do
+11. É possível criar, abrir, editar, salvar e executar arquivos SQL do
     diretório configurado.
 12. `Ctrl+P` busca tabelas/views e arquivos SQL do workspace ativo;
     `Ctrl+Tab` alterna workspaces circularmente.
