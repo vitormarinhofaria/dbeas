@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Estado global, mensagens e ciclo de vida da janela.
 
 mod quick_open;
@@ -756,8 +759,14 @@ impl App {
                     return Task::none();
                 };
                 let input_id = iced::widget::Id::unique();
+                // O campo recebe o caminho relativo ao sqlFilesDir: editar só o
+                // nome renomeia; mudar os diretórios move o item.
+                let name = match self.files_location() {
+                    Some((root, _)) => file_explorer::relative_to_root(&root, &entry.path),
+                    None => entry.name.clone(),
+                };
                 self.modal = Some(Modal::RenameItem {
-                    name: entry.name.clone(),
+                    name,
                     entry,
                     error: None,
                     input_id: input_id.clone(),
@@ -829,7 +838,7 @@ impl App {
                         }
                     }
                     let shown = display_path(ws, &new);
-                    self.notify(format!("Renomeado para {shown}"));
+                    self.notify(format!("Renomeado/movido para {shown}"));
                     self.list_files(None)
                 }
                 Err(e) => {

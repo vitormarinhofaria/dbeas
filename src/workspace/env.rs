@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Montagem do ambiente de resolução e interpolação de `${env.NOME}` (spec §3.3).
 
 use std::collections::HashMap;

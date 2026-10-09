@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Grade de resultados virtualizada (spec §5.1).
 //!
 //! Só as linhas visíveis (mais uma margem) viram widgets; espaços em branco

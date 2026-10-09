@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Testes contra um PostgreSQL real. Executados apenas quando
 //! `DBEAS_TEST_PG` estiver definido no formato `host:porta:usuario:senha:banco`.
 //!

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Seletor rápido (`Ctrl+P`): tabelas/views e arquivos SQL do workspace ativo.
 
 use std::path::{Path, PathBuf};

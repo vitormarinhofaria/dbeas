@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Renderização da janela principal.
 
 use iced::widget::{
@@ -523,15 +526,17 @@ impl App {
             } => {
                 let kind = if entry.is_dir { "diretório" } else { "arquivo" };
                 let mut col = column![
-                    text(format!("Renomear {kind}")).size(18).font(BOLD),
+                    text(format!("Renomear ou mover {kind}")).size(18).font(BOLD),
                     text(format!(
-                        "{} — o item continua no mesmo diretório.{}",
+                        "Caminho relativo ao sqlFilesDir. Altere o nome para renomear ou os \
+                         diretórios para mover (ex.: relatorios/{}). Só é possível mover para \
+                         diretórios existentes abaixo do sqlFilesDir; \"..\" não é permitido.{}",
                         entry.name,
                         if entry.is_dir { "" } else { " A extensão .sql é mantida." }
                     ))
                     .size(13)
                     .style(muted),
-                    text_input("novo nome", name)
+                    text_input("caminho/novo-nome.sql", name)
                         .id(input_id.clone())
                         .on_input(Message::RenameName)
                         .on_submit(Message::RenameSubmit),
@@ -546,7 +551,7 @@ impl App {
                         button(text("Cancelar"))
                             .on_press(Message::CloseModal)
                             .style(button::secondary),
-                        button(text(if *busy { "Renomeando…" } else { "Renomear" }))
+                        button(text(if *busy { "Aplicando…" } else { "Renomear/mover" }))
                             .on_press_maybe((!*busy).then_some(Message::RenameSubmit)),
                     ]
                     .spacing(8),
@@ -1274,7 +1279,7 @@ fn file_menu<'a>() -> Element<'a, Message> {
         Space::new().width(18),
         container(
             column![
-                entry("Renomear…", Message::RenameDialog, false),
+                entry("Renomear/mover…", Message::RenameDialog, false),
                 entry("Excluir…", Message::DeleteDialog, true),
             ]
             .width(160),

@@ -2,6 +2,10 @@
 name = "dbeas"
 version = "0.1.0"
 edition = "2024"
+description = "Cliente desktop para PostgreSQL com workspaces, editor SQL e edição de dados"
+license = "GPL-3.0-or-later"
+authors = ["Vitor Marinho Faria"]
+publish = false
 
 [dependencies]
 iced = { version = "0.14", features = ["tokio", "highlighter", "advanced"] }

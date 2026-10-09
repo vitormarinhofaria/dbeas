@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Conexão PostgreSQL de um workspace.
 //!
 //! Cada conexão é um ator: uma tarefa tokio dona do `Client` que atende

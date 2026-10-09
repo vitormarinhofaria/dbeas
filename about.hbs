@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>DBeas — licenças de terceiros</title>
+<style>
+  body { font-family: sans-serif; max-width: 960px; margin: 2em auto; padding: 0 1em; color: #222; }
+  h1, h2 { font-weight: 600; }
+  .licenses-list { list-style: none; padding: 0; }
+  .license { margin-top: 2.5em; border-top: 1px solid #ccc; padding-top: 1em; }
+  .license-used-by { margin: .5em 0 1em; }
+  pre.license-text { white-space: pre-wrap; background: #f6f6f6; padding: 1em; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Licenças de terceiros</h1>
+<p>
+  O DBeas é distribuído sob a GNU General Public License, versão 3 ou posterior
+  (arquivo <code>LICENSE</code>). Ele incorpora os componentes abaixo, cada um sob
+  sua própria licença.
+</p>
+
+<h2>Resumo</h2>
+<ul class="licenses-overview">
+{{#each overview}}
+  <li><a href="#{{id}}">{{name}}</a> ({{count}})</li>
+{{/each}}
+</ul>
+
+<h2>Componentes em C embutidos</h2>
+<p>
+  O crate <code>pg_query</code> compila e incorpora a <strong>libpg_query</strong>
+  (que contém código-fonte do servidor PostgreSQL 17). Esses componentes não são
+  crates e por isso não aparecem na lista gerada automaticamente abaixo.
+</p>
+<div class="license">
+  <h3 id="libpg_query">libpg_query — BSD-3-Clause</h3>
+  <pre class="license-text">Copyright (c) 2015, Lukas Fittl &lt;lukas@fittl.com&gt;
+Copyright (c) 2016-2023, Duboce Labs, Inc. (pganalyze) &lt;team@pganalyze.com&gt;
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation
+and/or other materials provided with the distribution.
+
+* Neither the name of pg_query nor the names of its contributors may be used
+to endorse or promote products derived from this software without specific
+prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS &quot;AS IS&quot;
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.</pre>
+</div>
+<div class="license">
+  <h3 id="postgresql">Código-fonte do PostgreSQL (via libpg_query) — PostgreSQL License</h3>
+  <pre class="license-text">PostgreSQL Database Management System
+(also known as Postgres, formerly known as Postgres95)
+
+Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+
+Portions Copyright (c) 1994, The Regents of the University of California
+
+Permission to use, copy, modify, and distribute this software and its
+documentation for any purpose, without fee, and without a written agreement
+is hereby granted, provided that the above copyright notice and this
+paragraph and the following two paragraphs appear in all copies.
+
+IN NO EVENT SHALL THE UNIVERSITY OF CALIFORNIA BE LIABLE TO ANY PARTY FOR
+DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, INCLUDING
+LOST PROFITS, ARISING OUT OF THE USE OF THIS SOFTWARE AND ITS
+DOCUMENTATION, EVEN IF THE UNIVERSITY OF CALIFORNIA HAS BEEN ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+THE UNIVERSITY OF CALIFORNIA SPECIFICALLY DISCLAIMS ANY WARRANTIES,
+INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS FOR A PARTICULAR PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS
+ON AN &quot;AS IS&quot; BASIS, AND THE UNIVERSITY OF CALIFORNIA HAS NO OBLIGATIONS TO
+PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.</pre>
+</div>
+
+<h2>Crates</h2>
+<ul class="licenses-list">
+{{#each licenses}}
+  <li class="license">
+    <h3 id="{{id}}">{{name}}</h3>
+    <p class="license-used-by">Usada por:</p>
+    <ul>
+    {{#each used_by}}
+      <li><a href="{{#if crate.repository}}{{crate.repository}}{{else}}https://crates.io/crates/{{crate.name}}{{/if}}">{{crate.name}} {{crate.version}}</a></li>
+    {{/each}}
+    </ul>
+    <pre class="license-text">{{text}}</pre>
+  </li>
+{{/each}}
+</ul>
+</body>
+</html>

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Edição de dados pela grade (spec §6.1–6.2).
 //!
 //! Um resultado só é editável quando pode ser mapeado sem ambiguidade para uma

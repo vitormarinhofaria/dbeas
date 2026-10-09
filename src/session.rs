@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Persistência do estado de sessão por workspace (spec §10.1).
 //!
 //! Guarda apenas estado serializável: abas, ordem, aba ativa, SQL, modo do

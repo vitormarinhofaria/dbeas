@@ -30,6 +30,7 @@ decidido.
 - [Transformações de SQL](arquitetura/transformacoes-sql.md) — ordenar/ocultar/reordenar pela grade: mecanismo, regras de recusa, integração.
 - [Editor inteligente](arquitetura/editor-inteligente.md) — autocomplete pelo catálogo e diagnóstico de sintaxe com libpg_query (FFI).
 - [Iced: estabilidade da árvore de widgets](arquitetura/iced-estabilidade-da-arvore.md) — **leia antes de mexer em views**: estrutura condicional faz widgets perderem foco/estado.
+- [Licença e dependências](arquitetura/licencas.md) — GPL-3.0-or-later, cabeçalho SPDX obrigatório, cargo-deny e cargo-about.
 - [Regras do dbeas.json](configuracao/dbeas-json.md) — validação, interpolação e padrões como implementados.
 - [Atalhos](usabilidade/atalhos.md) — mapa central e conflitos documentados.
 - [Transações (requireTransaction)](usabilidade/transacoes.md) — transação manual com botões; grade, SQL manual e arquivos participam; resumo antes do COMMIT.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Diagnóstico de sintaxe com o parser real do PostgreSQL (libpg_query), sem
 //! precisar do servidor (spec §7.1–7.2).
 //!

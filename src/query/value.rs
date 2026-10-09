@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Valores tipados de resultados (spec §5.1).
 //!
 //! O tokio-postgres recebe resultados em formato binário. Cada valor é

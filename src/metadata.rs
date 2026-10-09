@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Metadados do banco: schemas, tabelas, views, colunas, funções e sequências.
 //!
 //! O catálogo é carregado de uma vez pela conexão do workspace e fica em cache

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Editor SQL: highlight, números de linha, marcação de erros, autocomplete e
 //! atalhos.
 //!

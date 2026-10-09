@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Autocomplete de SQL a partir do catálogo do workspace ativo (spec §7.1).
 //!
 //! Heurística léxica, tolerante a SQL incompleto (o texto está sendo digitado):

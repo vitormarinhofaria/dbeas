@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Transformações estruturais de consultas a partir da grade (spec §5.2–5.5):
 //! ordenar, remover e reordenar itens do `SELECT`.
 //!

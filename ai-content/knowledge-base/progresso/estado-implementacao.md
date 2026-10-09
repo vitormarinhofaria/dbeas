@@ -11,7 +11,7 @@ Atualize ao fim de cada etapa.
   `~/.local/state/dbeas/session.json`.
 - Para não tocar na configuração real, isole com
   `XDG_CONFIG_HOME=/tmp/x/config XDG_STATE_HOME=/tmp/x/state cargo run`.
-- `cargo test` — testes unitários (76) + 7 de integração com PG. O build do
+- `cargo test` — testes unitários (77) + 7 de integração com PG. O build do
   `pg_query` precisa de `clang`.
 - Testes com PostgreSQL real (`tests/postgres.rs`), ignorados sem a variável:
   ```
@@ -100,8 +100,9 @@ futura. Autocomplete automático (após `.` e 2+ letras) e por Ctrl+Espaço.
 5. TLS (`sslMode`) — decidido adiar; conexão usa `NoTls`.
 5a. ~~Criar arquivo SQL pelo explorador~~ — feito em 2026-10-09 (spec §8). Ver
    [arquivos SQL](../usabilidade/arquivos-sql.md).
-5b. ~~Menu de contexto (renomear/excluir) no explorador~~ — feito em 2026-10-09;
-   excluir move para a lixeira. Ainda não está descrito na spec.
+5b. ~~Menu de contexto (renomear/mover e excluir) no explorador~~ — feito em
+   2026-10-09; renomear também move dentro do `sqlFilesDir` (sem `..`); excluir
+   move para a lixeira. Ainda não está descrito na spec.
 6. Melhorias conhecidas: o editor não rola horizontalmente (sem quebra de linha,
    linhas longas ficam cortadas); `timestamptz` é exibido em UTC; a altura usada no
    arraste do divisor é aproximada (`CHROME_HEIGHT`).

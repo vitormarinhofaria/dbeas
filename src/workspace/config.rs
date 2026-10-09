@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Leitura, validação e resolução do arquivo `dbeas.json` (spec §3).
 
 use std::fmt;

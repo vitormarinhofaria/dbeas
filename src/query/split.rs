@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Divisão de scripts em instruções, respeitando strings, identificadores
 //! entre aspas, dollar quoting e comentários do PostgreSQL.
 

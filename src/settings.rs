@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Configuração global: registro dos arquivos `dbeas.json` (spec §3.4).
 
 use std::path::{Path, PathBuf};

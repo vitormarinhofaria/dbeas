@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Utilitários de sistema de arquivos compartilhados pelos módulos de persistência.
 
 use std::fs;

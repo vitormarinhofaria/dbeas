@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Estado de execução de workspaces e abas.
 //!
 //! Separa o que é serializável (convertido para/desde `session`) do que é

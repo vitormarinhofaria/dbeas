@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Classificação conservadora de SQL para o modo `readOnly` (spec §6.3).
 //!
 //! É a primeira camada de proteção. A segunda é a sessão PostgreSQL com

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Navegação e operações de arquivos SQL (spec §8).
 //!
 //! A navegação fica restrita ao `sqlFilesDir`: caminhos são canonicalizados
@@ -208,36 +211,82 @@ fn managed_item(root: &Path, path: &Path) -> Result<(PathBuf, PathBuf), String> 
     Ok((root, item))
 }
 
-/// Destino de renomear `path` para `new_name` no mesmo diretório. Arquivos
-/// mantêm a extensão `.sql` (acrescentada se faltar). Recusa nomes com
-/// separador, `.`/`..` e nomes já existentes.
-pub fn resolve_rename(root: &Path, path: &Path, new_name: &str) -> Result<PathBuf, String> {
-    let (_, item) = managed_item(root, path)?;
-    let new_name = new_name.trim();
-    if new_name.is_empty() {
+/// Destino de renomear/mover `path` para `new_path`, um caminho **relativo
+/// ao `sqlFilesDir`** (ex.: `relatorios/mensal.sql`). Permite mover para
+/// qualquer diretório existente abaixo da raiz, mas recusa `..` (mesmo que o
+/// caminho voltasse para dentro dela), caminho absoluto, saída da raiz por link
+/// simbólico, diretório de destino inexistente, mover um diretório para dentro
+/// dele mesmo e destino já existente. Arquivos mantêm `.sql` (acrescentado se
+/// faltar).
+pub fn resolve_rename(root: &Path, path: &Path, new_path: &str) -> Result<PathBuf, String> {
+    use std::path::Component;
+
+    let (root, item) = managed_item(root, path)?;
+    let new_path = new_path
+        .trim()
+        .trim_end_matches(['/', std::path::MAIN_SEPARATOR]);
+    if new_path.is_empty() {
         return Err("informe o novo nome".into());
     }
-    if new_name.contains('/') || new_name.contains(std::path::MAIN_SEPARATOR) {
-        return Err("renomear não move entre diretórios; use um nome sem '/'".into());
+    let relative = Path::new(new_path);
+    if relative.is_absolute() {
+        return Err("use um caminho relativo ao diretório de arquivos SQL".into());
     }
-    if new_name == "." || new_name == ".." {
-        return Err("nome inválido".into());
+    if relative
+        .components()
+        .any(|c| matches!(c, Component::ParentDir))
+    {
+        return Err("caminhos com .. não são permitidos; só é possível mover para diretórios abaixo do diretório de arquivos SQL".into());
     }
+    let mut target = crate::fsutil::normalize(&root, relative);
+    if target == root {
+        return Err("informe um nome de arquivo ou diretório".into());
+    }
+
     let is_dir = item.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
-    let mut name = new_name.to_string();
-    if !is_dir && !is_sql(Path::new(&name)) {
-        name.push_str(".sql");
+    if !is_dir && !is_sql(&target) {
+        let mut with_extension = target.into_os_string();
+        with_extension.push(".sql");
+        target = PathBuf::from(with_extension);
     }
-    let target = item.parent().ok_or("caminho inválido")?.join(&name);
+
+    // Diretório de destino: precisa existir e, resolvidos os links, continuar
+    // dentro da raiz.
+    let parent = target.parent().ok_or("caminho inválido")?;
+    let parent = std::fs::canonicalize(parent)
+        .map_err(|_| format!("o diretório {} não existe", parent.display()))?;
+    if !parent.starts_with(&root) {
+        return Err("o destino ficaria fora do diretório de arquivos SQL".into());
+    }
+    let target = parent.join(target.file_name().ok_or("caminho inválido")?);
+
     if target == item {
         return Err("o nome é o mesmo".into());
     }
+    if is_dir && target.starts_with(&item) {
+        return Err("não é possível mover um diretório para dentro dele mesmo".into());
+    }
     if target.symlink_metadata().is_ok() {
-        return Err(format!(
-            "já existe um item chamado {name}; escolha outro nome"
-        ));
+        let shown = target
+            .strip_prefix(&root)
+            .unwrap_or(&target)
+            .display()
+            .to_string();
+        return Err(format!("já existe um item em {shown}; escolha outro nome"));
     }
     Ok(target)
+}
+
+/// Caminho de um item relativo ao `sqlFilesDir`, como é digitado ao renomear.
+pub fn relative_to_root(root: &Path, path: &Path) -> String {
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    path.strip_prefix(&root)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| {
+            path.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        })
 }
 
 pub async fn rename(root: PathBuf, path: PathBuf, new_name: String) -> Result<PathBuf, String> {
@@ -294,10 +343,12 @@ mod tests {
     fn rename_rules() {
         let root = tempfile::tempdir().unwrap();
         let r = fs::canonicalize(root.path()).unwrap();
-        fs::create_dir(r.join("dir")).unwrap();
+        fs::create_dir_all(r.join("dir/sub")).unwrap();
         fs::write(r.join("a.sql"), "").unwrap();
         fs::write(r.join("b.sql"), "").unwrap();
+        fs::write(r.join("dir/c.sql"), "").unwrap();
 
+        // Renomear no lugar (caminho relativo à raiz).
         assert_eq!(
             resolve_rename(&r, &r.join("a.sql"), "c").unwrap(),
             r.join("c.sql")
@@ -310,28 +361,49 @@ mod tests {
             resolve_rename(&r, &r.join("dir"), "outro").unwrap(),
             r.join("outro")
         );
-        assert!(
-            resolve_rename(&r, &r.join("a.sql"), "b")
-                .unwrap_err()
-                .contains("já existe")
+        assert_eq!(
+            resolve_rename(&r, &r.join("dir/c.sql"), "dir/d").unwrap(),
+            r.join("dir/d.sql")
         );
-        assert!(resolve_rename(&r, &r.join("a.sql"), "dir/x").is_err());
-        assert!(resolve_rename(&r, &r.join("a.sql"), "..").is_err());
-        assert!(resolve_rename(&r, &r.join("a.sql"), " ").is_err());
-        assert!(
-            resolve_rename(&r, &r.join("a.sql"), "a")
-                .unwrap_err()
-                .contains("mesmo")
+        // Mover para diretórios abaixo da raiz, inclusive de volta à raiz.
+        assert_eq!(
+            resolve_rename(&r, &r.join("a.sql"), "dir/sub/a").unwrap(),
+            r.join("dir/sub/a.sql")
         );
+        assert_eq!(
+            resolve_rename(&r, &r.join("dir/c.sql"), "c").unwrap(),
+            r.join("c.sql")
+        );
+        assert_eq!(
+            resolve_rename(&r, &r.join("dir/c.sql"), "./x.sql").unwrap(),
+            r.join("x.sql")
+        );
+
+        // Recusas.
+        let err = |p: &str, to: &str| resolve_rename(&r, &r.join(p), to).unwrap_err();
+        assert!(err("a.sql", "../fora").contains(".."));
+        assert!(err("a.sql", "dir/../b2").contains(".."));
+        assert!(err("a.sql", "/tmp/x").contains("relativo"));
+        assert!(err("a.sql", "nao/existe/x").contains("não existe"));
+        assert!(err("a.sql", "b").contains("já existe"));
+        assert!(err("a.sql", "a").contains("mesmo"));
+        assert!(err("a.sql", " ").contains("informe"));
+        assert!(err("a.sql", ".").contains("informe"));
+        assert!(err("dir", "dir/sub/dir").contains("dentro dele mesmo"));
         assert!(resolve_rename(&r, &r, "x").is_err());
-        assert!(
-            resolve_rename(&r, &r.join("sumiu.sql"), "x")
-                .unwrap_err()
-                .contains("não existe")
-        );
+        assert!(err("sumiu.sql", "x").contains("não existe"));
         let outside = tempfile::tempdir().unwrap();
         fs::write(outside.path().join("f.sql"), "").unwrap();
         assert!(resolve_rename(&r, &outside.path().join("f.sql"), "x").is_err());
+        std::os::unix::fs::symlink(outside.path(), r.join("link")).unwrap();
+        assert!(err("a.sql", "link/a").contains("fora"));
+    }
+
+    #[test]
+    fn relative_paths_for_the_rename_field() {
+        let root = tempfile::tempdir().unwrap();
+        let r = fs::canonicalize(root.path()).unwrap();
+        assert_eq!(relative_to_root(&r, &r.join("dir/a.sql")), "dir/a.sql");
     }
 
     #[tokio::test]

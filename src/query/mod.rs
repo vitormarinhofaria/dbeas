@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Execução SQL: resultados, erros com posição e utilitários de texto SQL.
 
 pub mod classify;
