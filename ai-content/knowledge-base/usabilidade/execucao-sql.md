@@ -12,7 +12,8 @@ automaticamente") junto da §4.3.
   leitura. Se a aba já existe, é reutilizada.
 - **Nunca executa sozinho:** SQL do usuário, arquivos SQL abertos e abas
   restauradas da sessão (a aba de tabela volta com o SQL, sem resultado).
-- **Ordenação por cabeçalho** (a implementar): reescreve o SQL e reexecuta, se for
-  SELECT.
+- **Ordenação por cabeçalho:** reescreve o ORDER BY e reexecuta a instrução que
+  gerou o resultado. Ocultar e reordenar colunas alteram o SQL sem reexecutar. Ver
+  [transformações](../arquitetura/transformacoes-sql.md).
 - **Erros:** o último resultado válido continua visível; a mensagem mostra
   linha:coluna, o cursor vai para a posição e a linha fica marcada no gutter.

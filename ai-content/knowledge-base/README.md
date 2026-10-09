@@ -27,8 +27,10 @@ decidido.
 - [Estado da implementação](progresso/estado-implementacao.md) — **comece por aqui ao retomar**: o que está pronto, como testar, pendências.
 - [Mapa de módulos](arquitetura/modulos.md) — responsabilidade de cada módulo, fluxo assíncrono, identidade de workspace.
 - [Decisões da rodada 1](arquitetura/decisoes-rodada-1.md) — driver, parser, paginação/cursor, readOnly, sessão, editor, grade.
+- [Transformações de SQL](arquitetura/transformacoes-sql.md) — ordenar/ocultar/reordenar pela grade: mecanismo, regras de recusa, integração.
 - [Regras do dbeas.json](configuracao/dbeas-json.md) — validação, interpolação e padrões como implementados.
 - [Atalhos](usabilidade/atalhos.md) — mapa central e conflitos documentados.
+- [Transações (requireTransaction)](usabilidade/transacoes.md) — decisão: transação manual com botões; grade, SQL manual e arquivos participam. Não implementado.
 - [Quando SQL é executado](usabilidade/execucao-sql.md) — conexão, abertura de tabela, nada de execução automática de SQL do usuário.
 
 - [Identificação do workspace na barra lateral](usabilidade/identificacao-workspace-sidebar.md) — usar `name` da entrada do `dbeas.json`, não o nome do arquivo.

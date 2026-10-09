@@ -15,6 +15,7 @@ use crate::data_grid::ScrollState;
 use crate::file_explorer::FileEntry;
 use crate::metadata::Catalog;
 use crate::query::ResultSet;
+use crate::query::transform::Direction;
 use crate::session::{ExplorerMode, TabKind, TabSession, WorkspaceSession};
 use crate::workspace::Descriptor;
 
@@ -119,6 +120,53 @@ pub struct Tab {
     pub grid_scroll: ScrollState,
     pub widths: Vec<f32>,
     pub selected: Option<(usize, usize)>,
+    pub columns: ColumnLayout,
+    /// Instrução que produziu o resultado atual, para transformações.
+    pub source: Option<Source>,
+    /// Texto da instrução antes da primeira remoção/reordenação de colunas,
+    /// usado por "restaurar colunas".
+    pub pristine: Option<String>,
+    /// O SQL foi gerado pela aplicação e não foi editado pelo usuário.
+    pub generated: bool,
+}
+
+/// Disposição visual das colunas da grade (spec §5.2–5.4).
+#[derive(Debug, Clone, Default)]
+pub struct ColumnLayout {
+    /// Colunas visíveis do resultado, na ordem exibida.
+    pub order: Vec<usize>,
+    /// Coluna de ordenação (pelo nome no resultado) e direção.
+    pub sort: Option<(String, Direction)>,
+    /// Cabeçalho pressionado (início de clique ou arraste).
+    pub pressed: Option<usize>,
+    /// Para cada coluna do resultado, o índice do item correspondente no
+    /// `SELECT` atual, se o mapeamento for conhecido.
+    pub item_of: Vec<Option<usize>>,
+    /// Nomes ocultados a reaplicar após a próxima execução (sessão restaurada).
+    pub pending_hidden: Vec<String>,
+}
+
+impl ColumnLayout {
+    pub fn reset(&mut self, columns: usize, items: Option<usize>) {
+        self.order = (0..columns).collect();
+        self.pressed = None;
+        self.item_of = if items == Some(columns) {
+            (0..columns).map(Some).collect()
+        } else {
+            vec![None; columns]
+        };
+    }
+
+    pub fn hidden_count(&self) -> usize {
+        self.item_of.len().saturating_sub(self.order.len())
+    }
+}
+
+/// Instrução de origem de um resultado e sua posição no editor.
+#[derive(Debug, Clone)]
+pub struct Source {
+    pub range: std::ops::Range<usize>,
+    pub text: String,
 }
 
 #[derive(Default)]
@@ -134,6 +182,10 @@ pub struct RunState {
     pub messages: Vec<String>,
     pub error: Option<ErrorInfo>,
     pub elapsed_ms: Option<u128>,
+    /// SQL enviado na execução atual.
+    pub sent: String,
+    /// A execução atual foi disparada pela grade (ordenação), não pelo usuário.
+    pub from_grid: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -164,12 +216,25 @@ impl Tab {
             grid_scroll: ScrollState::default(),
             widths: Vec::new(),
             selected: None,
+            columns: ColumnLayout::default(),
+            source: None,
+            pristine: None,
+            generated: false,
         }
     }
 
     fn restore(saved: &TabSession, next_id: &mut u64) -> Self {
         let mut tab = Self::new(saved.kind.clone(), saved.sql.clone(), next_id);
         tab.split = saved.split.clamp(0.1, 0.9);
+        tab.columns.pending_hidden = saved.hidden_columns.clone();
+        tab.columns.sort = saved.sort.as_ref().map(|s| {
+            let direction = if s.descending {
+                Direction::Desc
+            } else {
+                Direction::Asc
+            };
+            (s.column.clone(), direction)
+        });
         if let TabKind::File { dirty, .. } = &saved.kind {
             tab.dirty = *dirty;
             // Arquivos sem alterações são relidos do disco pelo app.
@@ -191,10 +256,26 @@ impl Tab {
             TabKind::File { .. } if !self.dirty => String::new(),
             _ => self.editor.text(),
         };
+        let hidden_columns = match &self.run.result {
+            Some(result) if !self.columns.item_of.is_empty() => (0..result.columns.len())
+                .filter(|c| !self.columns.order.contains(c))
+                .map(|c| result.columns[c].name.clone())
+                .collect(),
+            _ => self.columns.pending_hidden.clone(),
+        };
         TabSession {
             kind,
             sql,
             split: self.split,
+            hidden_columns,
+            sort: self
+                .columns
+                .sort
+                .as_ref()
+                .map(|(column, d)| crate::session::SavedSort {
+                    column: column.clone(),
+                    descending: *d == Direction::Desc,
+                }),
         }
     }
 

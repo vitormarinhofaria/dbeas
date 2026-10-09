@@ -2,6 +2,7 @@
 
 pub mod classify;
 pub mod split;
+pub mod transform;
 pub mod value;
 
 use std::ops::Range;
@@ -38,6 +39,8 @@ pub struct ResultSet {
 pub struct Outcome {
     /// Último conjunto de linhas retornado, se houver.
     pub result: Option<ResultSet>,
+    /// Faixa, no SQL enviado, da instrução que produziu `result`.
+    pub result_statement: Option<Range<usize>>,
     /// Identificador do cursor aberto para buscar mais linhas.
     pub cursor: Option<u64>,
     /// Mensagens de comandos (`UPDATE 3`, etc.).

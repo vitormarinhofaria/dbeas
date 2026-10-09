@@ -3,7 +3,7 @@
 Arquivo de continuidade: leia antes de retomar o trabalho com um contexto novo.
 Atualize ao fim de cada etapa.
 
-**Última atualização:** 2026-10-09 (rodada 1 — fundação + UI básica)
+**Última atualização:** 2026-10-09 (rodada 2 — transformações de SQL pela grade)
 
 ## Como rodar e testar
 
@@ -11,7 +11,7 @@ Atualize ao fim de cada etapa.
   `~/.local/state/dbeas/session.json`.
 - Para não tocar na configuração real, isole com
   `XDG_CONFIG_HOME=/tmp/x/config XDG_STATE_HOME=/tmp/x/state cargo run`.
-- `cargo test` — testes unitários (44).
+- `cargo test` — testes unitários (52).
 - Testes com PostgreSQL real (`tests/postgres.rs`), ignorados sem a variável:
   ```
   docker run -d --name dbeas-test-pg -e POSTGRES_PASSWORD=dbeas -e POSTGRES_USER=dbeas \
@@ -41,29 +41,43 @@ Atualize ao fim de cada etapa.
 | Arquivos SQL: navegar (restrito ao `sqlFilesDir`), abrir, editar, salvar, executar | implementado, sem teste de clique | `src/file_explorer.rs` |
 | `Ctrl+P` seletor rápido, `Ctrl+Tab` workspaces, mapa central de atalhos | implementado, sem teste de teclado | `src/commands.rs`, `src/app/quick_open.rs` |
 
+## Feito (rodada 2)
+
+| Área | Situação | Onde |
+| --- | --- | --- |
+| Análise estrutural de SELECT (parser + tokenizer com posições) | pronto, testado | `src/query/transform.rs` |
+| Ordenar pelo cabeçalho (ASC → DESC → sem), reescreve o ORDER BY e reexecuta | pronto, verificado no app e no PG | `transform::set_order`, `App::toggle_sort` |
+| Ocultar coluna (botão do meio) removendo o item do SELECT, sem reexecutar | pronto, verificado no app e no PG | `transform::remove_item`, `App::hide_column` |
+| Reordenar arrastando cabeçalhos (soltar sobre outro cabeçalho) | implementado, testado no PG; arraste não testado na UI | `transform::reorder_items`, `App::move_column` |
+| Restaurar colunas, recusa segura com explicação, origem gerada/editada | implementado | `App::restore_columns` |
+| Sessão guarda colunas ocultas e ordenação por aba | pronto, testado | `src/session.rs` |
+
 ## Pendente (próximas rodadas)
 
-1. **Transformações de SQL** (§5.2–5.5) com `sqlparser`: ordenar por cabeçalho
-   (reescreve e executa), ocultar coluna com o botão do meio, reordenar por arraste,
-   restaurar colunas. Ainda não há clique no cabeçalho.
+1. ~~Transformações de SQL~~ — feito na rodada 2 (ver
+   [transformações](../arquitetura/transformacoes-sql.md)).
 2. **Edição de dados** (§6): mapear o resultado para uma tabela (`ColumnInfo.table_oid`
    / `column_id` + PK do catálogo), alterações pendentes, `Ctrl+S` com popup de SQL,
    `Ctrl+Shift+S` direto, bloqueio em `readOnly`.
-3. **requireTransaction** (§6.4): COMMIT/ROLLBACK explícitos, indicador de transação
-   aberta, fluxo ao fechar/desconectar. **Decisão pendente com o usuário:** política
-   para SQL arbitrário (scripts, comandos de transação do usuário). Hoje o SQL do
-   editor roda em autocommit.
+3. **requireTransaction** (§6.4): a política foi decidida (transação manual com
+   botões Iniciar/Confirmar/Cancelar; grade, SQL manual e arquivos participam). Ver
+   [transações](../usabilidade/transacoes.md). Todas as perguntas foram respondidas;
+   pronto para implementar. Hoje o SQL do editor roda em autocommit.
 4. **LSP / autocomplete / diagnósticos antes da execução** (§7.2): hoje a barra de
    status informa "indisponível". O catálogo já tem tudo para autocomplete local.
 5. TLS (`sslMode`) — decidido adiar; conexão usa `NoTls`.
 6. Melhorias conhecidas: o editor não rola horizontalmente (sem quebra de linha,
    linhas longas ficam cortadas); `timestamptz` é exibido em UTC; a altura usada no
    arraste do divisor é aproximada (`CHROME_HEIGHT`).
+7. Grade: soltar o arraste de cabeçalho fora da grade deixa o cabeçalho destacado
+   até o próximo clique; reordenações só visuais se perdem ao reexecutar.
 
 ## Ver também
 
 - [Módulos](../arquitetura/modulos.md)
 - [Decisões da rodada 1](../arquitetura/decisoes-rodada-1.md)
+- [Transformações de SQL](../arquitetura/transformacoes-sql.md)
 - [Regras do dbeas.json](../configuracao/dbeas-json.md)
 - [Atalhos](../usabilidade/atalhos.md)
 - [Execução de SQL](../usabilidade/execucao-sql.md)
+- [Transações](../usabilidade/transacoes.md)

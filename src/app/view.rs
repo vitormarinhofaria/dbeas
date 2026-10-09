@@ -809,6 +809,20 @@ fn results_panel<'a>(ws: &'a Workspace, tab: &'a Tab) -> Element<'a, Message> {
             );
         }
     }
+    let hidden = tab.columns.hidden_count();
+    if hidden > 0 || tab.pristine.is_some() {
+        let label = if hidden > 0 {
+            format!("Restaurar colunas ({hidden})")
+        } else {
+            "Restaurar colunas".to_string()
+        };
+        toolbar = toolbar.push(
+            button(text(label).size(12))
+                .on_press(Message::RestoreColumns)
+                .padding([2, 8])
+                .style(button::secondary),
+        );
+    }
     if let Some(ms) = run.elapsed_ms {
         toolbar = toolbar.push(text(format!("{ms} ms")).size(12).style(muted));
     }
@@ -858,8 +872,19 @@ fn results_panel<'a>(ws: &'a Workspace, tab: &'a Tab) -> Element<'a, Message> {
             header_id: tab.grid_header_id.clone(),
             body_id: tab.grid_body_id.clone(),
             selected: tab.selected,
+            order: &tab.columns.order,
+            sort: tab.columns.sort.as_ref().map(|(name, d)| {
+                (
+                    name.as_str(),
+                    *d == crate::query::transform::Direction::Desc,
+                )
+            }),
+            pressed: tab.columns.pressed,
             on_scroll: Message::GridScrolled,
             on_select: Message::SelectCell,
+            on_header_press: Message::HeaderPressed,
+            on_header_release: Message::HeaderReleased,
+            on_header_middle: Message::HideColumn,
         }),
         _ => center(
             text(if ws.connection.is_none() {

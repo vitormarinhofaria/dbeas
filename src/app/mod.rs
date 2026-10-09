@@ -18,6 +18,7 @@ use crate::connection::{self, ConnectionHandle, Page, Status};
 use crate::data_grid;
 use crate::file_explorer::{self, FileEntry};
 use crate::metadata::{self, Catalog};
+use crate::query::transform::{self, Direction};
 use crate::query::{Outcome, QueryError, split};
 use crate::session::{self, ExplorerMode, Session, TabKind};
 use crate::settings::{self, Settings};
@@ -130,6 +131,10 @@ pub enum Message {
     EditorScrolled(Viewport),
     GridScrolled(Viewport),
     SelectCell(usize, usize),
+    HeaderPressed(usize),
+    HeaderReleased(usize),
+    HideColumn(usize),
+    RestoreColumns,
     FetchMore,
     Executed {
         ws: WorkspaceId,
@@ -570,6 +575,28 @@ impl App {
                     header
                 }
             }
+            Message::HeaderPressed(col) => {
+                if let Some(tab) = self.active_tab_mut() {
+                    tab.columns.pressed = Some(col);
+                }
+                Task::none()
+            }
+            Message::HeaderReleased(col) => {
+                let pressed = self.active_tab_mut().and_then(|t| t.columns.pressed.take());
+                match pressed {
+                    Some(p) if p == col => self.toggle_sort(col),
+                    Some(p) => {
+                        self.move_column(p, col);
+                        Task::none()
+                    }
+                    None => Task::none(),
+                }
+            }
+            Message::HideColumn(col) => {
+                self.hide_column(col);
+                Task::none()
+            }
+            Message::RestoreColumns => self.restore_columns(),
             Message::SelectCell(row, col) => {
                 if let Some(tab) = self.active_tab_mut() {
                     tab.selected = Some((row, col));
@@ -960,7 +987,7 @@ impl App {
             return Task::none();
         };
         let sql = metadata::select_for(relation);
-        let tab = Tab::new(
+        let mut tab = Tab::new(
             TabKind::Table {
                 schema: schema.into(),
                 name: name.into(),
@@ -968,6 +995,7 @@ impl App {
             sql,
             &mut next_id,
         );
+        tab.generated = true;
         ws.tabs.push(tab);
         ws.active_tab = ws.tabs.len() - 1;
         self.next_tab_id = next_id;
@@ -1074,8 +1102,12 @@ impl App {
         }
         let is_edit = action.is_edit();
         tab.editor.perform(action);
-        if is_edit && tab.file_path().is_some() {
-            tab.dirty = true;
+        if is_edit {
+            if tab.file_path().is_some() {
+                tab.dirty = true;
+            }
+            tab.generated = false;
+            tab.pristine = None;
         }
         let line = tab.editor.cursor().position.line;
         match sql_editor::scroll_to_show(line, tab.editor_viewport.as_ref()) {
@@ -1097,8 +1129,7 @@ impl App {
             return Task::none();
         };
         let ws = &mut self.workspaces[ws_index];
-        let ws_id = ws.desc.id.clone();
-        let Some(handle) = ws.connection.clone() else {
+        if ws.connection.is_none() {
             let connecting = ws.status == Status::Connecting;
             self.notify_error(if connecting {
                 "Aguarde a conexão terminar para executar"
@@ -1106,7 +1137,7 @@ impl App {
                 "Workspace desconectado: conecte antes de executar"
             });
             return Task::none();
-        };
+        }
         let tab_index = ws.active_tab;
         let tab = &mut ws.tabs[tab_index];
         if tab.run.running {
@@ -1142,12 +1173,42 @@ impl App {
             self.notify("Nada para executar");
             return Task::none();
         }
+        self.start_execution(sql, base, statements, false)
+    }
 
+    /// Executa a instrução que está em `range` no editor da aba ativa.
+    fn execute_range(&mut self, range: std::ops::Range<usize>, from_grid: bool) -> Task<Message> {
+        let Some(tab) = self.active_tab_mut() else {
+            return Task::none();
+        };
+        let sql = tab.editor.text()[range.clone()].to_string();
+        let len = sql.len();
+        self.start_execution(sql, range.start, vec![0..len], from_grid)
+    }
+
+    fn start_execution(
+        &mut self,
+        sql: String,
+        base: usize,
+        statements: Vec<std::ops::Range<usize>>,
+        from_grid: bool,
+    ) -> Task<Message> {
+        let Some(ws) = self.active_ws_mut() else {
+            return Task::none();
+        };
+        let ws_id = ws.desc.id.clone();
+        let Some(handle) = ws.connection.clone() else {
+            return Task::none();
+        };
+        let index = ws.active_tab;
+        let tab = &mut ws.tabs[index];
         tab.run.running = true;
         tab.run.exec_id += 1;
         tab.run.base_offset = base;
         tab.run.error = None;
         tab.run.cursor = None;
+        tab.run.sent = sql.clone();
+        tab.run.from_grid = from_grid;
         let exec_id = tab.run.exec_id;
         let tab_id = tab.id;
         Task::perform(
@@ -1182,6 +1243,7 @@ impl App {
                 t.run.cursor = outcome.cursor;
                 if let Some(result) = outcome.result {
                     t.widths = data_grid::column_widths(&result);
+                    layout_after_execution(t, &result, outcome.result_statement);
                     t.run.result = Some(result);
                     t.selected = None;
                     t.grid_scroll.offset_y = 0.0;
@@ -1428,4 +1490,301 @@ fn describe_error(error: &QueryError) -> String {
         text.push_str(&format!("\nDica: {hint}"));
     }
     text
+}
+
+// ----------------------------------------------------------------------
+// Transformações pela grade (spec §5.2–5.5)
+
+impl App {
+    fn toggle_sort(&mut self, col: usize) -> Task<Message> {
+        let Some(tab) = self.active_tab_mut() else {
+            return Task::none();
+        };
+        if tab.run.running {
+            return Task::none();
+        }
+        let Some(result) = &tab.run.result else {
+            return Task::none();
+        };
+        let name = result.columns[col].name.clone();
+        let unique = result.columns.iter().filter(|c| c.name == name).count() == 1;
+        let next = match &tab.columns.sort {
+            Some((n, Direction::Asc)) if *n == name => Some(Direction::Desc),
+            Some((n, Direction::Desc)) if *n == name => None,
+            _ => Some(Direction::Asc),
+        };
+        let expr = if unique {
+            metadata::quote_ident(&name)
+        } else if let Some(item) = tab.columns.item_of.get(col).copied().flatten() {
+            (item + 1).to_string()
+        } else {
+            self.notify_error(format!(
+                "Ordenação não aplicada: há mais de uma coluna chamada {name}"
+            ));
+            return Task::none();
+        };
+
+        let outcome = current_source(tab).and_then(|src| {
+            transform::set_order(&src.text, &expr, next).map(|sql| (src.range.clone(), sql))
+        });
+        match outcome {
+            Ok((_, sql)) => {
+                let range = replace_source(tab, sql);
+                tab.columns.sort = next.map(|d| (name, d));
+                // Colunas ocultadas só na grade continuam ocultas após reexecutar.
+                tab.columns.pending_hidden = hidden_names(tab);
+                self.execute_range(range, true)
+            }
+            Err(reason) => {
+                let origin = origin_label(tab);
+                self.notify_error(format!("Ordenação não aplicada ({origin}): {reason}"));
+                Task::none()
+            }
+        }
+    }
+
+    fn hide_column(&mut self, col: usize) {
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        let Some(result) = &tab.run.result else {
+            return;
+        };
+        let name = result.columns[col].name.clone();
+        if tab.columns.order.len() <= 1 {
+            self.notify("A grade precisa manter ao menos uma coluna visível");
+            return;
+        }
+        tab.columns.order.retain(|c| *c != col);
+
+        let outcome = current_source(tab).and_then(|src| {
+            let item =
+                tab.columns.item_of.get(col).copied().flatten().ok_or(
+                    "não foi possível relacionar a coluna a um item do SELECT".to_string(),
+                )?;
+            transform::remove_item(&src.text, item).map(|sql| (item, src.text.clone(), sql))
+        });
+        match outcome {
+            Ok((item, before, sql)) => {
+                tab.pristine.get_or_insert(before);
+                replace_source(tab, sql);
+                for slot in tab.columns.item_of.iter_mut() {
+                    *slot = match *slot {
+                        Some(i) if i == item => None,
+                        Some(i) if i > item => Some(i - 1),
+                        other => other,
+                    };
+                }
+                self.notify(format!("Coluna {name} ocultada e removida do SQL"));
+            }
+            Err(reason) => {
+                let origin = origin_label(tab);
+                self.notify_error(format!(
+                    "Coluna {name} ocultada só na grade; SQL não alterado ({origin}): {reason}"
+                ));
+            }
+        }
+    }
+
+    fn move_column(&mut self, from: usize, to: usize) {
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        let (Some(a), Some(b)) = (
+            tab.columns.order.iter().position(|c| *c == from),
+            tab.columns.order.iter().position(|c| *c == to),
+        ) else {
+            return;
+        };
+        let moved = tab.columns.order.remove(a);
+        tab.columns.order.insert(b, moved);
+
+        let outcome = current_source(tab).and_then(|src| {
+            let shape = transform::analyze(&src.text)?;
+            let items: Option<Vec<usize>> = tab
+                .columns
+                .order
+                .iter()
+                .map(|c| tab.columns.item_of.get(*c).copied().flatten())
+                .collect();
+            let items = items
+                .filter(|items| items.len() == shape.items.len())
+                .ok_or("há colunas ocultadas só na grade que continuam no SELECT".to_string())?;
+            transform::reorder_items(&src.text, &items).map(|sql| (src.text.clone(), sql))
+        });
+        match outcome {
+            Ok((before, sql)) => {
+                tab.pristine.get_or_insert(before);
+                replace_source(tab, sql);
+                let order = tab.columns.order.clone();
+                for (position, c) in order.into_iter().enumerate() {
+                    tab.columns.item_of[c] = Some(position);
+                }
+            }
+            Err(reason) => {
+                let origin = origin_label(tab);
+                self.notify_error(format!(
+                    "Colunas reordenadas só na grade; SQL não alterado ({origin}): {reason}"
+                ));
+            }
+        }
+    }
+
+    fn restore_columns(&mut self) -> Task<Message> {
+        let Some(tab) = self.active_tab_mut() else {
+            return Task::none();
+        };
+        let Some(result) = &tab.run.result else {
+            return Task::none();
+        };
+        let columns = result.columns.len();
+        tab.columns.order = (0..columns).collect();
+        tab.columns.pending_hidden.clear();
+
+        let Some(pristine) = tab.pristine.take() else {
+            return Task::none();
+        };
+        if let Err(reason) = current_source(tab) {
+            self.notify_error(format!("Colunas restauradas só na grade: {reason}"));
+            return Task::none();
+        }
+        // Reaplica a ordenação atual sobre o SQL original, se possível.
+        let sql = match &tab.columns.sort {
+            Some((name, d)) => {
+                transform::set_order(&pristine, &metadata::quote_ident(name), Some(*d))
+                    .unwrap_or(pristine)
+            }
+            None => pristine,
+        };
+        let items = transform::analyze(&sql).map(|s| s.items.len()).ok();
+        let range = replace_source(tab, sql);
+        if items == Some(columns) {
+            tab.columns.item_of = (0..columns).map(Some).collect();
+            Task::none()
+        } else {
+            // O resultado atual não tem as colunas restauradas: reexecuta.
+            self.execute_range(range, true)
+        }
+    }
+}
+
+/// Instrução de origem do resultado, se o editor ainda tiver o mesmo texto
+/// naquela posição.
+fn current_source(tab: &Tab) -> Result<state::Source, String> {
+    let source = tab
+        .source
+        .clone()
+        .ok_or("o resultado não veio de uma única instrução identificável")?;
+    let text = tab.editor.text();
+    if text.get(source.range.clone()) != Some(source.text.as_str()) {
+        return Err("o SQL foi alterado desde a execução; execute novamente".into());
+    }
+    Ok(source)
+}
+
+/// Troca a instrução de origem no editor por `sql`, preservando o restante do
+/// texto e a posição do cursor. Retorna a nova faixa da instrução.
+fn replace_source(tab: &mut Tab, sql: String) -> std::ops::Range<usize> {
+    let Some(source) = tab.source.as_mut() else {
+        return 0..0;
+    };
+    let text = tab.editor.text();
+    let updated = format!(
+        "{}{sql}{}",
+        &text[..source.range.start],
+        &text[source.range.end..]
+    );
+    let cursor = tab.editor.cursor();
+    tab.editor = text_editor::Content::with_text(&updated);
+    let line = cursor
+        .position
+        .line
+        .min(tab.editor.line_count().saturating_sub(1));
+    let column = tab
+        .editor
+        .line(line)
+        .map_or(0, |l| cursor.position.column.min(l.text.len()));
+    tab.editor.move_to(text_editor::Cursor {
+        position: text_editor::Position { line, column },
+        selection: None,
+    });
+    source.range = source.range.start..source.range.start + sql.len();
+    source.text = sql;
+    let range = source.range.clone();
+    if tab.file_path().is_some() {
+        tab.dirty = true;
+    }
+    range
+}
+
+fn hidden_names(tab: &Tab) -> Vec<String> {
+    let Some(result) = &tab.run.result else {
+        return Vec::new();
+    };
+    (0..result.columns.len())
+        .filter(|c| !tab.columns.order.contains(c))
+        .map(|c| result.columns[c].name.clone())
+        .collect()
+}
+
+fn origin_label(tab: &Tab) -> &'static str {
+    if tab.generated {
+        "consulta gerada pela aplicação"
+    } else {
+        "consulta editada pelo usuário"
+    }
+}
+
+/// Atualiza origem e disposição das colunas quando chega um novo resultado.
+fn layout_after_execution(
+    tab: &mut Tab,
+    result: &crate::query::ResultSet,
+    statement: Option<std::ops::Range<usize>>,
+) {
+    tab.source = statement.and_then(|r| {
+        let text = tab.run.sent.get(r.clone())?.to_string();
+        let base = tab.run.base_offset;
+        Some(state::Source {
+            range: base + r.start..base + r.end,
+            text,
+        })
+    });
+    let shape = tab
+        .source
+        .as_ref()
+        .and_then(|s| transform::analyze(&s.text).ok());
+    let items = shape
+        .as_ref()
+        .filter(|s| !s.has_wildcard && !s.set_operation)
+        .map(|s| s.items.len());
+    tab.columns.reset(result.columns.len(), items);
+
+    // Ordenação continua indicada se a consulta ainda tem ORDER BY e a coluna existe.
+    let keep_sort = tab.run.from_grid
+        || (shape.as_ref().is_some_and(|s| s.order_by.is_some())
+            && tab
+                .columns
+                .sort
+                .as_ref()
+                .is_some_and(|(name, _)| result.columns.iter().any(|c| &c.name == name)));
+    if !keep_sort {
+        tab.columns.sort = None;
+    }
+
+    let hidden = std::mem::take(&mut tab.columns.pending_hidden);
+    if !hidden.is_empty() {
+        let keep: Vec<usize> = tab
+            .columns
+            .order
+            .iter()
+            .copied()
+            .filter(|c| !hidden.contains(&result.columns[*c].name))
+            .collect();
+        if !keep.is_empty() {
+            tab.columns.order = keep;
+        }
+    }
+    if !tab.run.from_grid {
+        tab.pristine = None;
+    }
 }

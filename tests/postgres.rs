@@ -123,3 +123,32 @@ async fn read_only_blocks_writes_in_two_layers() {
     let err = conn.execute(sql, vec![0..len]).await.unwrap_err();
     assert_eq!(err.code.as_deref(), Some("25006"), "{}", err.message);
 }
+
+#[tokio::test]
+async fn transformed_queries_run_and_keep_their_meaning() {
+    use dbeas::query::transform::{self, Direction};
+    let Some(cfg) = config(false) else { return };
+    let conn = connection::connect(cfg).await.unwrap();
+    let run = |sql: String| {
+        let conn = conn.clone();
+        async move {
+            let len = sql.len();
+            conn.execute(sql, vec![0..len]).await.expect("executa").result.expect("linhas")
+        }
+    };
+
+    let base = "SELECT g AS id, -- identificador\n       'n' || g AS nome,\n       g * 2 AS dobro\nFROM generate_series(1, 5) g\nLIMIT 4";
+    let sorted = transform::set_order(base, "dobro", Some(Direction::Desc)).unwrap();
+    let rs = run(sorted.clone()).await;
+    assert_eq!(rs.rows[0][0], Value::Int(5));
+    assert_eq!(rs.rows.len(), 4);
+
+    let hidden = transform::remove_item(&sorted, 1).unwrap();
+    let rs = run(hidden.clone()).await;
+    assert_eq!(rs.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["id", "dobro"]);
+
+    let reordered = transform::reorder_items(&hidden, &[1, 0]).unwrap();
+    let rs = run(reordered).await;
+    assert_eq!(rs.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["dobro", "id"]);
+    assert_eq!(rs.rows[0][0], Value::Int(10));
+}

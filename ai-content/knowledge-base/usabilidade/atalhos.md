@@ -24,3 +24,12 @@ está focado. Fora do editor, só disparam se nenhum widget capturou a tecla.
 - **Ctrl+Shift+S:** reservado para executar alterações direto (ainda não
   implementado).
 - **Ctrl+Tab** troca workspace, e não aba, por decisão da spec (§9).
+
+## Mouse na grade
+
+| Ação | Efeito |
+| --- | --- |
+| Clique no cabeçalho | Ordena (ASC → DESC → sem ordenação) e reexecuta |
+| Botão do meio no cabeçalho | Oculta a coluna e a remove do SELECT, quando seguro |
+| Arrastar cabeçalho e soltar sobre outro | Move a coluna e reordena o SELECT, quando seguro |
+| Botão "Restaurar colunas" | Mostra de novo as colunas ocultas e restaura o SQL |

@@ -77,6 +77,18 @@ pub struct TabSession {
     /// Fração da altura ocupada pela grade de resultados.
     #[serde(default = "default_split")]
     pub split: f32,
+    /// Colunas ocultadas na grade (por nome), reaplicadas após a próxima execução.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_columns: Vec<String>,
+    /// Ordenação ativa pelo cabeçalho.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<SavedSort>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SavedSort {
+    pub column: String,
+    pub descending: bool,
 }
 
 fn default_split() -> f32 {
@@ -159,6 +171,8 @@ mod tests {
                         kind: TabKind::Scratch,
                         sql: "select 1".into(),
                         split: 0.5,
+                        hidden_columns: Vec::new(),
+                        sort: None,
                     },
                     TabSession {
                         kind: TabKind::Table {
@@ -167,6 +181,11 @@ mod tests {
                         },
                         sql: "select a from t".into(),
                         split: 0.6,
+                        hidden_columns: vec!["b".into()],
+                        sort: Some(SavedSort {
+                            column: "a".into(),
+                            descending: true,
+                        }),
                     },
                 ],
             },

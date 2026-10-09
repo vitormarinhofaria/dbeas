@@ -215,6 +215,7 @@ impl Actor {
         let started = Instant::now();
         let mut outcome = Outcome {
             result: None,
+            result_statement: None,
             cursor: None,
             messages: Vec::new(),
             elapsed_ms: 0,
@@ -292,6 +293,7 @@ impl Actor {
                 rows.len(),
                 if has_more { " (há mais)" } else { "" }
             ));
+            outcome.result_statement = Some(range.clone());
             outcome.result = Some(ResultSet {
                 columns,
                 rows,

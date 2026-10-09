@@ -76,16 +76,52 @@ pub struct GridView<'a, M> {
     pub header_id: Id,
     pub body_id: Id,
     pub selected: Option<(usize, usize)>,
+    /// Colunas do resultado visíveis, na ordem exibida.
+    pub order: &'a [usize],
+    /// Coluna ordenada (nome) e se é descendente.
+    pub sort: Option<(&'a str, bool)>,
+    /// Cabeçalho pressionado (arraste em andamento).
+    pub pressed: Option<usize>,
     pub on_scroll: fn(Viewport) -> M,
     pub on_select: fn(usize, usize) -> M,
+    /// Botão esquerdo pressionado/solto sobre um cabeçalho: clique ordena,
+    /// soltar sobre outro cabeçalho move a coluna.
+    pub on_header_press: fn(usize) -> M,
+    pub on_header_release: fn(usize) -> M,
+    /// Botão do meio sobre um cabeçalho oculta a coluna.
+    pub on_header_middle: fn(usize) -> M,
 }
 
 pub fn view<'a, M: Clone + 'a>(g: GridView<'a, M>) -> Element<'a, M> {
-    let total_width: f32 = ROW_NUMBER_WIDTH + g.widths.iter().sum::<f32>();
+    let total_width: f32 = ROW_NUMBER_WIDTH + g.order.iter().map(|c| g.widths[*c]).sum::<f32>();
 
-    let mut header = Row::new().push(header_cell("#".into(), String::new(), ROW_NUMBER_WIDTH));
-    for (col, width) in g.result.columns.iter().zip(g.widths) {
-        header = header.push(header_cell(col.name.clone(), col.type_name.clone(), *width));
+    let mut header = Row::new().push(header_cell(
+        "#".into(),
+        String::new(),
+        ROW_NUMBER_WIDTH,
+        false,
+    ));
+    for &c in g.order {
+        let col = &g.result.columns[c];
+        let mut name = col.name.clone();
+        if let Some((sorted, desc)) = g.sort {
+            if sorted == col.name {
+                name.push_str(if desc { " ▼" } else { " ▲" });
+            }
+        }
+        let cell = header_cell(
+            name,
+            col.type_name.clone(),
+            g.widths[c],
+            g.pressed == Some(c),
+        );
+        header = header.push(
+            mouse_area(cell)
+                .on_press((g.on_header_press)(c))
+                .on_release((g.on_header_release)(c))
+                .on_middle_press((g.on_header_middle)(c))
+                .interaction(iced::mouse::Interaction::Pointer),
+        );
     }
     let header = scrollable(header)
         .id(g.header_id.clone())
@@ -124,7 +160,12 @@ pub fn view<'a, M: Clone + 'a>(g: GridView<'a, M>) -> Element<'a, M> {
     column![header, body].into()
 }
 
-fn header_cell<'a, M: 'a>(name: String, type_name: String, width: f32) -> Element<'a, M> {
+fn header_cell<'a, M: 'a>(
+    name: String,
+    type_name: String,
+    width: f32,
+    pressed: bool,
+) -> Element<'a, M> {
     container(
         column![
             text(name)
@@ -145,10 +186,17 @@ fn header_cell<'a, M: 'a>(name: String, type_name: String, width: f32) -> Elemen
     .height(HEADER_HEIGHT)
     .padding([3, 6])
     .clip(true)
-    .style(|theme: &Theme| {
+    .style(move |theme: &Theme| {
         let p = theme.extended_palette();
         container::Style {
-            background: Some(p.background.weak.color.into()),
+            background: Some(
+                if pressed {
+                    p.primary.weak.color
+                } else {
+                    p.background.weak.color
+                }
+                .into(),
+            ),
             border: iced::Border {
                 color: p.background.strong.color,
                 width: 0.5,
@@ -173,7 +221,8 @@ fn data_row<'a, M: Clone + 'a>(g: &GridView<'a, M>, index: usize) -> Element<'a,
         .padding([3, 6])
         .style(row_number_style),
     );
-    for (col, width) in g.widths.iter().enumerate() {
+    for &col in g.order {
+        let width = &g.widths[col];
         let value = &g.result.rows[index][col];
         let selected = g.selected == Some((index, col));
         let content: Element<'a, M> = if value.is_null() {
