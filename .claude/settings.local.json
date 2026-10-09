@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "engineering-skills@claude-code-skills": true,
+    "self-improving-agent@claude-code-skills": true
+  }
+}
