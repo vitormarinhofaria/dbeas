@@ -93,6 +93,58 @@ pub fn check(text: &str) -> Vec<Diagnostic> {
         .collect()
 }
 
+/// Trecho a sublinhar para um erro em `offset`: o token que começa ali
+/// (palavra, número, string entre aspas ou um símbolo). Se a posição estiver no
+/// fim do texto ou em espaço (ex.: "syntax error at end of input"), usa o
+/// último token antes dela.
+pub fn error_span(text: &str, offset: usize) -> std::ops::Range<usize> {
+    let mut offset = offset.min(text.len());
+    while !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+
+    let at = text[offset..].chars().next();
+    if at.is_none_or(char::is_whitespace) {
+        // Último caractere significativo antes da posição.
+        let Some((start, c)) = text[..offset]
+            .char_indices()
+            .rev()
+            .find(|(_, c)| !c.is_whitespace())
+        else {
+            return offset..offset;
+        };
+        if is_word(c) {
+            let word_start = text[..start]
+                .char_indices()
+                .rev()
+                .take_while(|(_, c)| is_word(*c))
+                .last()
+                .map_or(start, |(i, _)| i);
+            return word_start..start + c.len_utf8();
+        }
+        return start..start + c.len_utf8();
+    }
+
+    let c = at.expect("caractere na posição");
+    let end = if is_word(c) {
+        offset
+            + text[offset..]
+                .char_indices()
+                .find(|(_, c)| !is_word(*c))
+                .map_or(text.len() - offset, |(i, _)| i)
+    } else if c == '\'' || c == '"' {
+        // String/identificador entre aspas, até a aspa de fechamento (ou fim da linha).
+        let rest = &text[offset + 1..];
+        let close = rest.find(c).map(|p| p + 2);
+        let line_end = rest.find('\n').map(|p| p + 1);
+        offset + close.or(line_end).unwrap_or(text.len() - offset)
+    } else {
+        offset + c.len_utf8()
+    };
+    offset..end
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,6 +172,22 @@ mod tests {
         assert_eq!(d.len(), 1);
         assert_eq!(&text[d[0].offset..], "x");
         assert_eq!(d[0].column, 19);
+    }
+
+    #[test]
+    fn error_spans() {
+        let text = "select * fromm t";
+        assert_eq!(&text[error_span(text, 9)], "fromm");
+        let text = "select (1";
+        assert_eq!(&text[error_span(text, text.len())], "1");
+        let text = "select 1 +  ";
+        assert_eq!(&text[error_span(text, text.len())], "+");
+        let text = "select 'abc' x";
+        assert_eq!(&text[error_span(text, 7)], "'abc'");
+        let text = "select ação, 1";
+        assert_eq!(&text[error_span(text, 7)], "ação");
+        assert_eq!(&text[error_span(text, text.find(',').unwrap())], ",");
+        assert_eq!(error_span("", 0), 0..0);
     }
 
     #[test]

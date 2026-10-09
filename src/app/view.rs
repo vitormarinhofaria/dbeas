@@ -268,12 +268,31 @@ impl App {
         let editor: Element<'_, Message> = if tab.loading_file {
             center(text("Carregando arquivo…")).into()
         } else {
-            let mut error_lines: Vec<usize> = tab
-                .diagnostics
+            // Marcações só valem para o texto em que foram obtidas.
+            let diagnostics: &[crate::diagnostics::Diagnostic] =
+                if tab.diagnostics_rev == tab.text_rev {
+                    &tab.diagnostics
+                } else {
+                    &[]
+                };
+            let fresh_error = tab.run.error.as_ref().filter(|e| e.rev == tab.text_rev);
+            let error_offset = fresh_error.and_then(|e| e.offset);
+            let mut error_lines: Vec<usize> = diagnostics
                 .iter()
                 .map(|d| d.line.saturating_sub(1))
                 .collect();
-            error_lines.extend(tab.run.error.as_ref().and_then(|e| e.line));
+            let mut underlines = Vec::new();
+            if !diagnostics.is_empty() || error_offset.is_some() {
+                let text = tab.editor.text();
+                underlines.extend(
+                    diagnostics
+                        .iter()
+                        .map(|d| d.offset)
+                        .chain(error_offset)
+                        .map(|o| crate::diagnostics::error_span(&text, o)),
+                );
+            }
+            error_lines.extend(fresh_error.and_then(|e| e.line));
             let completion = tab.completion.as_ref().map(|c| {
                 let text = tab.editor.text();
                 let (line, column) = crate::query::split::line_col(&text, c.data.start);
@@ -290,6 +309,7 @@ impl App {
                 editor_id: tab.editor_id.clone(),
                 scroll_id: tab.editor_scroll_id.clone(),
                 error_lines,
+                underlines,
                 scroll_y: tab.editor_viewport.map_or(0.0, |v| v.absolute_offset().y),
                 completion,
                 completion_keys: sql_editor::CompletionKeys {

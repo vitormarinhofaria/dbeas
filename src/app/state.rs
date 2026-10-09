@@ -173,6 +173,8 @@ pub struct Tab {
     pub diagnostics: Vec<Diagnostic>,
     /// Incrementado a cada edição; diagnósticos de revisões antigas são ignorados.
     pub text_rev: u64,
+    /// Revisão do texto analisada em `diagnostics`.
+    pub diagnostics_rev: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -256,6 +258,11 @@ pub struct ErrorInfo {
     pub position: Option<(usize, usize)>,
     /// Linha (a partir de 0) para marcação no gutter.
     pub line: Option<usize>,
+    /// Deslocamento exato informado pelo servidor, para sublinhar o trecho.
+    /// `None` quando o erro não tem posição (ex.: violação de restrição).
+    pub offset: Option<usize>,
+    /// Revisão do texto em que o erro foi obtido; marcações só valem nela.
+    pub rev: u64,
 }
 
 impl Tab {
@@ -288,6 +295,7 @@ impl Tab {
             completion: None,
             diagnostics: Vec::new(),
             text_rev: 0,
+            diagnostics_rev: 0,
         }
     }
 

@@ -713,6 +713,8 @@ impl App {
                             text: e.clone(),
                             position: None,
                             line: None,
+                            offset: None,
+                            rev: t.text_rev,
                         });
                         self.notify_error(e);
                     }
@@ -881,6 +883,7 @@ impl App {
                 if let Some(t) = self.tab_by_id(&ws, tab) {
                     if t.text_rev == rev {
                         t.diagnostics = diagnostics;
+                        t.diagnostics_rev = rev;
                     }
                 }
                 Task::none()
@@ -1776,6 +1779,11 @@ impl App {
                     text: describe_error(&error),
                     position: None,
                     line: None,
+                    offset: error
+                        .offset
+                        .map(|o| t.run.base_offset + o)
+                        .filter(|o| *o <= text.len()),
+                    rev: t.text_rev,
                 };
                 if let Some(offset) = offset.filter(|o| *o <= text.len()) {
                     info.position = Some(split::line_col(&text, offset));

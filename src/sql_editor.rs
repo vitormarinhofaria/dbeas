@@ -61,6 +61,9 @@ pub struct EditorView<'a, M> {
     /// Linhas (a partir de 0) a destacar no gutter: erro de execução e
     /// diagnósticos de sintaxe.
     pub error_lines: Vec<usize>,
+    /// Trechos (em bytes) a sublinhar em vermelho: erros de sintaxe e a posição
+    /// do último erro de execução.
+    pub underlines: Vec<std::ops::Range<usize>>,
     pub on_action: fn(text_editor::Action) -> M,
     pub on_command: fn(Command) -> M,
     pub on_scroll: fn(Viewport) -> M,
@@ -106,6 +109,21 @@ pub fn view<'a, M: Clone + 'a>(v: EditorView<'a, M>) -> Element<'a, M> {
             )
         })
         .on_action(v.on_action);
+
+    // O sublinhado é um texto desenhado por cima do editor, dentro da mesma área
+    // rolável e com a mesma fonte, tamanho, altura de linha e margens: o texto
+    // anterior ao erro fica transparente (só ocupa o mesmo espaço) e o trecho
+    // errado é redesenhado em vermelho, sublinhado. Assim o alinhamento não
+    // depende de medir caracteres. A camada existe sempre (mesma árvore).
+    let underline = container(
+        rich_text(underline_spans(v.content, &v.underlines))
+            .font(Font::MONOSPACE)
+            .size(FONT_SIZE)
+            .line_height(LineHeight::Absolute(Pixels(LINE_HEIGHT)))
+            .wrapping(iced::widget::text::Wrapping::None),
+    )
+    .padding(PADDING);
+    let input = stack![input, underline].width(Length::Fill);
 
     let body = scrollable(row![gutter, input].width(Length::Fill))
         .id(v.scroll_id)
@@ -189,6 +207,36 @@ fn popup<'a, M: Clone + 'a>(c: &CompletionView<'a>, on_pick: fn(usize) -> M) -> 
             }
         })
         .into()
+}
+
+fn underline_spans<'a>(
+    content: &Content,
+    ranges: &[std::ops::Range<usize>],
+) -> Vec<iced::widget::text::Span<'a, (), Font>> {
+    if ranges.is_empty() {
+        return Vec::new();
+    }
+    let text = content.text();
+    let mut ranges: Vec<_> = ranges
+        .iter()
+        .filter(|r| r.start < r.end && r.end <= text.len())
+        .filter(|r| text.is_char_boundary(r.start) && text.is_char_boundary(r.end))
+        .cloned()
+        .collect();
+    ranges.sort_by_key(|r| r.start);
+
+    let red = Color::from_rgb(1.0, 0.33, 0.33);
+    let mut spans = Vec::new();
+    let mut at = 0;
+    for r in ranges {
+        if r.start < at {
+            continue;
+        }
+        spans.push(span(text[at..r.start].to_string()).color(Color::TRANSPARENT));
+        spans.push(span(text[r.clone()].to_string()).color(red).underline(true));
+        at = r.end;
+    }
+    spans
 }
 
 fn gutter<'a, M: 'a>(line_count: usize, digits: usize, error_lines: &[usize]) -> Element<'a, M> {

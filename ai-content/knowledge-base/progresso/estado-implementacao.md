@@ -11,7 +11,7 @@ Atualize ao fim de cada etapa.
   `~/.local/state/dbeas/session.json`.
 - Para não tocar na configuração real, isole com
   `XDG_CONFIG_HOME=/tmp/x/config XDG_STATE_HOME=/tmp/x/state cargo run`.
-- `cargo test` — testes unitários (68) + 7 de integração com PG. O build do
+- `cargo test` — testes unitários (69) + 7 de integração com PG. O build do
   `pg_query` precisa de `clang`.
 - Testes com PostgreSQL real (`tests/postgres.rs`), ignorados sem a variável:
   ```
@@ -85,6 +85,8 @@ futura. Autocomplete automático (após `.` e 2+ letras) e por Ctrl+Espaço.
 - [x] Integração no editor: popup junto ao cursor (verificado no app), teclas,
   Ctrl+Espaço, diagnóstico 400 ms após editar com marcação no gutter e rodapé
   (verificado no app). Ver [editor inteligente](../arquitetura/editor-inteligente.md).
+- [x] Sublinhado vermelho no trecho errado (diagnóstico e erro de execução com
+  posição), alinhado pelo próprio layout de texto. Verificado no app.
 
 ## Pendente (próximas rodadas)
 

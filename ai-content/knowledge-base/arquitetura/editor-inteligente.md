@@ -15,8 +15,30 @@ servidor LSP externo fica como camada opcional futura.
 - Disparo: 400 ms depois da última edição (`schedule_diagnostics` + `text_rev`:
   respostas de revisões antigas são descartadas), ao trocar de aba/workspace e ao
   abrir arquivo. Roda em `spawn_blocking`.
-- Exibição: linhas com erro em vermelho no gutter e rodapé "Sintaxe — linha L,
-  coluna C: mensagem (+n)".
+- Exibição: linhas com erro em vermelho no gutter, rodapé "Sintaxe — linha L,
+  coluna C: mensagem (+n)" e **sublinhado vermelho no trecho errado** dentro do
+  editor (pedido do usuário, 2026-10-09).
+
+## Sublinhado do trecho errado
+
+- `diagnostics::error_span(texto, offset)` define o trecho: o token que começa na
+  posição (palavra, número, string/identificador entre aspas ou um símbolo); no
+  fim da entrada ou em espaço, o último token antes dela. Testado.
+- Vale para diagnósticos de sintaxe e para erros de execução que trazem posição
+  do servidor (`ErrorInfo.offset`); erros sem posição (ex.: violação de
+  restrição) não sublinham nada.
+- Desenho: um `rich_text` sobreposto ao `text_editor` num `stack` dentro do mesmo
+  `scrollable`, com mesma fonte, tamanho, altura de linha, margem e sem quebra. O
+  texto antes do erro vai transparente (só ocupa espaço) e o trecho errado é
+  redesenhado em vermelho com `Span::underline`. O alinhamento vem do próprio
+  layout de texto, sem medir caracteres (funciona com acentos e tabs). O
+  `rich_text` sem links não reivindica o mouse, então cliques e seleção chegam ao
+  editor. A camada existe sempre, vazia quando não há erro (ver
+  [estabilidade da árvore](iced-estabilidade-da-arvore.md)).
+- Marcações (sublinhado e gutter) só aparecem se a revisão do texto for a mesma
+  em que foram obtidas (`Tab.diagnostics_rev`, `ErrorInfo.rev` × `Tab.text_rev`);
+  enquanto se digita, somem até o novo diagnóstico (400 ms), para não marcar o
+  lugar errado. O rodapé continua mostrando a última mensagem.
 - Limitação: só sintaxe. Tabelas/colunas inexistentes aparecem apenas ao executar
   (erro do servidor, com linha/coluna).
 - Exige `clang`/`libclang` para compilar (build do `pg_query`).
