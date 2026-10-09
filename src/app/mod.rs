@@ -14,7 +14,10 @@ use iced::widget::{operation, text_editor};
 use iced::{Event, Point, Size, Subscription, Task, Theme, event, mouse, window};
 
 use crate::commands::{self, Command};
-use crate::connection::{self, ConnectionHandle, Page, Status};
+use crate::connection::{
+    self, ConnectionHandle, ExecOptions, Page, Status, TxCommand, TxState, TxSummary,
+};
+use crate::data_edit;
 use crate::data_grid;
 use crate::file_explorer::{self, FileEntry};
 use crate::metadata::{self, Catalog};
@@ -56,6 +59,10 @@ pub struct App {
     notice: Option<Notice>,
     session_dirty: bool,
     next_tab_id: u64,
+    after_tx: Option<AfterTx>,
+    pending_execution: Option<PendingExecution>,
+    /// Janela cujo fechamento foi pedido, enquanto há transação a resolver.
+    closing_window: Option<window::Id>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,10 +84,60 @@ enum Drag {
 }
 
 pub enum Modal {
-    AddWorkspace { path: String, error: Option<String> },
-    RemoveWorkspace { file: PathBuf, names: Vec<String> },
-    CloseTab { tab_id: u64, title: String },
+    /// Resumo da transação antes do COMMIT.
+    Commit {
+        ws: WorkspaceId,
+        summary: Option<Result<TxSummary, String>>,
+        grid: Vec<String>,
+    },
+    /// Fechar a aplicação ou desconectar com transação aberta.
+    PendingTransaction {
+        ws: WorkspaceId,
+        name: String,
+        failed: bool,
+        closing: bool,
+    },
+    /// Executar um arquivo salvo dentro de uma transação nova.
+    RunFileInTransaction {
+        title: String,
+    },
+    /// SQL das alterações da grade, antes de executar (Ctrl+S).
+    GridSave {
+        tab: u64,
+        sql: String,
+        error: Option<String>,
+        running: bool,
+        needs_transaction: bool,
+    },
+    AddWorkspace {
+        path: String,
+        error: Option<String>,
+    },
+    RemoveWorkspace {
+        file: PathBuf,
+        names: Vec<String>,
+    },
+    CloseTab {
+        tab_id: u64,
+        title: String,
+    },
     Shortcuts,
+}
+
+/// O que fazer depois que a transação pendente for encerrada.
+#[derive(Debug, Clone)]
+enum AfterTx {
+    Close(window::Id),
+    Disconnect(WorkspaceId),
+}
+
+/// Execução aguardando o BEGIN pedido pelo usuário.
+struct PendingExecution {
+    ws: WorkspaceId,
+    tab: u64,
+    sql: String,
+    base: usize,
+    statements: Vec<std::ops::Range<usize>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +161,17 @@ pub enum Message {
     SubmitAddWorkspace,
     AskRemoveWorkspace(usize),
     ConfirmRemoveWorkspace,
+
+    // Transações
+    TxBegin(WorkspaceId),
+    TxRequestCommit(WorkspaceId),
+    TxSummaryLoaded(WorkspaceId, Result<TxSummary, String>),
+    TxCommit(WorkspaceId),
+    TxRollback(WorkspaceId),
+    TxFinished(WorkspaceId, TxCommand, Result<(), String>),
+    PendingTxCommit,
+    PendingTxRollback,
+    ConfirmRunFile,
 
     // Exploradores
     SetExplorer(ExplorerMode),
@@ -131,6 +199,22 @@ pub enum Message {
     EditorScrolled(Viewport),
     GridScrolled(Viewport),
     SelectCell(usize, usize),
+    StartEdit(usize, usize),
+    EditInput(String),
+    CommitEdit,
+    SetNull,
+    RevertCell,
+    RevertAll,
+    GridSaveCopy,
+    GridSaveExecute,
+    GridSaveDiscard,
+    EditsApplied {
+        ws: WorkspaceId,
+        tab: u64,
+        cells: Vec<(usize, Vec<usize>)>,
+        log: Vec<String>,
+        result: Result<Vec<Vec<crate::query::Value>>, QueryError>,
+    },
     HeaderPressed(usize),
     HeaderReleased(usize),
     HideColumn(usize),
@@ -215,6 +299,9 @@ impl App {
             }),
             session_dirty: false,
             next_tab_id: 0,
+            after_tx: None,
+            pending_execution: None,
+            closing_window: None,
         };
 
         let mut tasks = vec![app.reload_workspaces()];
@@ -337,13 +424,30 @@ impl App {
             self.session_dirty = true;
         }
 
+        if let Message::Executed { ws, .. } | Message::Fetched { ws, .. } = &message {
+            let id = ws.clone();
+            if let Some(w) = self.ws_by_id(&id) {
+                w.sync_tx();
+            }
+        }
+
         match message {
             Message::SelectWorkspace(index) => self.select_workspace(index),
             Message::Connect(index) => self.connect(index),
             Message::Disconnect(index) => {
-                if let Some(ws) = self.workspaces.get_mut(index) {
-                    ws.disconnect();
+                let Some(ws) = self.workspaces.get_mut(index) else {
+                    return Task::none();
+                };
+                if ws.tx != TxState::Idle && ws.connection.is_some() {
+                    self.modal = Some(Modal::PendingTransaction {
+                        ws: ws.desc.id.clone(),
+                        name: ws.desc.display_name.clone(),
+                        failed: ws.tx == TxState::Failed,
+                        closing: false,
+                    });
+                    return Task::none();
                 }
+                ws.disconnect();
                 Task::none()
             }
             Message::Connected(id, result) => {
@@ -374,6 +478,7 @@ impl App {
                         Ok(catalog) => {
                             ws.catalog = Some(catalog);
                             ws.catalog_error = None;
+                            refresh_edit_targets(ws);
                         }
                         Err(e) => ws.catalog_error = Some(e),
                     }
@@ -443,6 +548,98 @@ impl App {
                 self.reload_workspaces()
             }
 
+            Message::TxBegin(id) => self.tx_command(&id, TxCommand::Begin),
+            Message::TxRollback(id) => {
+                self.modal = None;
+                self.tx_command(&id, TxCommand::Rollback)
+            }
+            Message::TxCommit(id) => {
+                self.modal = None;
+                self.tx_command(&id, TxCommand::Commit)
+            }
+            Message::TxRequestCommit(id) => {
+                let Some(ws) = self.ws_by_id(&id) else {
+                    return Task::none();
+                };
+                let Some(handle) = ws.connection.clone() else {
+                    return Task::none();
+                };
+                self.modal = Some(Modal::Commit {
+                    ws: id.clone(),
+                    summary: None,
+                    grid: ws.grid_log.clone(),
+                });
+                Task::perform(async move { handle.summary().await }, move |r| {
+                    Message::TxSummaryLoaded(id.clone(), r)
+                })
+            }
+            Message::TxSummaryLoaded(id, result) => {
+                if let Some(Modal::Commit { ws, summary, .. }) = &mut self.modal {
+                    if *ws == id {
+                        *summary = Some(result);
+                    }
+                }
+                if let Some(ws) = self.ws_by_id(&id) {
+                    ws.sync_tx();
+                }
+                Task::none()
+            }
+            Message::TxFinished(id, command, result) => {
+                let Some(ws) = self.ws_by_id(&id) else {
+                    return Task::none();
+                };
+                ws.tx_busy = false;
+                ws.sync_tx();
+                match result {
+                    Ok(()) => {
+                        if let Some(Modal::GridSave { needs_transaction, .. }) = &mut self.modal {
+                            *needs_transaction = command != TxCommand::Begin;
+                        }
+                        self.notify(match command {
+                            TxCommand::Begin => "Transação iniciada",
+                            TxCommand::Commit => "Transação confirmada (COMMIT)",
+                            TxCommand::Rollback => "Transação revertida (ROLLBACK)",
+                        });
+                        let mut tasks = Vec::new();
+                        if command == TxCommand::Begin {
+                            if let Some(p) = self.pending_execution.take().filter(|p| p.ws == id) {
+                                tasks.push(self.run_pending(p));
+                            }
+                        } else {
+                            tasks.push(self.continue_after_tx());
+                        }
+                        Task::batch(tasks)
+                    }
+                    Err(e) => {
+                        self.pending_execution = None;
+                        self.after_tx = None;
+                        self.closing_window = None;
+                        self.notify_error(format!("Falha na transação: {e}"));
+                        Task::none()
+                    }
+                }
+            }
+            Message::PendingTxCommit => {
+                let Some(Modal::PendingTransaction { ws, closing, .. }) = self.modal.take() else {
+                    return Task::none();
+                };
+                self.after_tx = Some(self.after_for(&ws, closing));
+                self.update(Message::TxRequestCommit(ws))
+            }
+            Message::PendingTxRollback => {
+                let Some(Modal::PendingTransaction { ws, closing, .. }) = self.modal.take() else {
+                    return Task::none();
+                };
+                self.after_tx = Some(self.after_for(&ws, closing));
+                self.tx_command(&ws, TxCommand::Rollback)
+            }
+            Message::ConfirmRunFile => {
+                self.modal = None;
+                let Some(id) = self.pending_execution.as_ref().map(|p| p.ws.clone()) else {
+                    return Task::none();
+                };
+                self.tx_command(&id, TxCommand::Begin)
+            }
             Message::SetExplorer(mode) => {
                 let Some(ws) = self.active_ws_mut() else {
                     return Task::none();
@@ -598,18 +795,96 @@ impl App {
             }
             Message::RestoreColumns => self.restore_columns(),
             Message::SelectCell(row, col) => {
+                self.commit_edit();
                 if let Some(tab) = self.active_tab_mut() {
                     tab.selected = Some((row, col));
+                    tab.columns.pressed = None;
                 }
                 Task::none()
             }
+            Message::StartEdit(row, col) => self.start_edit(row, col),
+            Message::EditInput(value) => {
+                if let Some(editor) = self.active_tab_mut().and_then(|t| t.editing.as_mut()) {
+                    editor.text = value;
+                }
+                Task::none()
+            }
+            Message::CommitEdit => {
+                self.commit_edit();
+                Task::none()
+            }
+            Message::SetNull => {
+                if let Some((row, col)) = self.editable_selection() {
+                    let tab = self.active_tab_mut().expect("aba ativa");
+                    tab.editing = None;
+                    tab.pending.insert((row, col), None);
+                }
+                Task::none()
+            }
+            Message::RevertCell => {
+                if let Some(tab) = self.active_tab_mut() {
+                    if let Some(cell) = tab.selected {
+                        tab.pending.remove(&cell);
+                    }
+                    tab.editing = None;
+                }
+                Task::none()
+            }
+            Message::RevertAll => {
+                if let Some(tab) = self.active_tab_mut() {
+                    tab.pending.clear();
+                    tab.editing = None;
+                }
+                Task::none()
+            }
+            Message::GridSaveCopy => {
+                let Some(Modal::GridSave { sql, .. }) = self.modal.take() else {
+                    return Task::none();
+                };
+                self.notify("SQL copiado; as alterações continuam pendentes");
+                iced::clipboard::write(sql)
+            }
+            Message::GridSaveExecute => {
+                if let Some(Modal::GridSave { running, error, .. }) = &mut self.modal {
+                    *running = true;
+                    *error = None;
+                }
+                self.apply_pending()
+            }
+            Message::GridSaveDiscard => {
+                let Some(Modal::GridSave { tab, .. }) = self.modal.take() else {
+                    return Task::none();
+                };
+                if let Some(t) = self
+                    .active_ws_mut()
+                    .and_then(|w| w.tabs.iter_mut().find(|t| t.id == tab))
+                {
+                    t.pending.clear();
+                    t.editing = None;
+                }
+                self.notify("Alterações pendentes descartadas");
+                Task::none()
+            }
+            Message::EditsApplied {
+                ws,
+                tab,
+                cells,
+                log,
+                result,
+            } => self.on_edits_applied(ws, tab, cells, log, result),
             Message::FetchMore => self.fetch_more(),
             Message::Executed {
                 ws,
                 tab,
                 exec_id,
                 result,
-            } => self.on_executed(ws, tab, exec_id, result),
+            } => {
+                let task = self.on_executed(ws.clone(), tab, exec_id, result);
+                if let Some(w) = self.ws_by_id(&ws) {
+                    refresh_edit_targets(w);
+                }
+                task
+            }
             Message::Fetched {
                 ws,
                 tab,
@@ -714,6 +989,9 @@ impl App {
             }
             Message::CloseModal => {
                 self.modal = None;
+                self.after_tx = None;
+                self.closing_window = None;
+                self.pending_execution = None;
                 self.quick_open = None;
                 Task::none()
             }
@@ -760,6 +1038,20 @@ impl App {
             }
 
             Message::CloseRequested(id) => {
+                if let Some(ws) = self
+                    .workspaces
+                    .iter()
+                    .find(|w| w.tx != TxState::Idle && w.connection.is_some())
+                {
+                    self.closing_window = Some(id);
+                    self.modal = Some(Modal::PendingTransaction {
+                        ws: ws.desc.id.clone(),
+                        name: ws.desc.display_name.clone(),
+                        failed: ws.tx == TxState::Failed,
+                        closing: true,
+                    });
+                    return Task::none();
+                }
                 // Gravação síncrona: a janela fecha logo em seguida.
                 if let Err(e) = self.snapshot().save(&self.session_path) {
                     eprintln!("dbeas: {e}");
@@ -1173,6 +1465,26 @@ impl App {
             self.notify("Nada para executar");
             return Task::none();
         }
+
+        // Arquivo salvo em workspace com transação obrigatória: confirma e
+        // executa dentro de uma transação nova (decisão em usabilidade/transacoes.md).
+        let ws = &self.workspaces[ws_index];
+        let tab = &ws.tabs[ws.active_tab];
+        let saved_file = tab.file_path().is_some() && !tab.dirty;
+        let writes = statements
+            .iter()
+            .any(|r| crate::query::classify::check_read_only(&sql[r.clone()]).is_err());
+        if saved_file && writes && ws.require_transaction() && ws.tx == TxState::Idle {
+            self.pending_execution = Some(PendingExecution {
+                ws: ws.desc.id.clone(),
+                tab: tab.id,
+                sql,
+                base,
+                statements,
+            });
+            self.modal = Some(Modal::RunFileInTransaction { title: tab.title() });
+            return Task::none();
+        }
         self.start_execution(sql, base, statements, false)
     }
 
@@ -1202,6 +1514,12 @@ impl App {
         };
         let index = ws.active_tab;
         let tab = &mut ws.tabs[index];
+        if !tab.pending.is_empty() {
+            self.notify_error(
+                "Há alterações pendentes na grade: revise com Ctrl+S ou reverta antes de executar de novo",
+            );
+            return Task::none();
+        }
         tab.run.running = true;
         tab.run.exec_id += 1;
         tab.run.base_offset = base;
@@ -1209,10 +1527,14 @@ impl App {
         tab.run.cursor = None;
         tab.run.sent = sql.clone();
         tab.run.from_grid = from_grid;
+        // Arquivos salvos podem conter BEGIN/COMMIT; SQL manual não.
+        let options = ExecOptions {
+            allow_tx_control: tab.file_path().is_some() && !tab.dirty,
+        };
         let exec_id = tab.run.exec_id;
         let tab_id = tab.id;
         Task::perform(
-            async move { handle.execute(sql, statements).await },
+            async move { handle.execute_with(sql, statements, options).await },
             move |result| Message::Executed {
                 ws: ws_id.clone(),
                 tab: tab_id,
@@ -1345,6 +1667,16 @@ impl App {
         match command {
             Command::ExecuteCurrent => self.execute(false),
             Command::ExecuteScript => self.execute(true),
+            Command::Save if self.has_pending() => self.open_grid_save(),
+            Command::SaveDirect => {
+                if self.has_pending() {
+                    self.commit_edit();
+                    self.apply_pending()
+                } else {
+                    self.notify("Nenhuma alteração pendente na grade");
+                    Task::none()
+                }
+            }
             Command::Save => {
                 let Some(ws) = self.active_ws() else {
                     return Task::none();
@@ -1445,8 +1777,21 @@ impl App {
             }
             return Task::none();
         }
+        if matches!(key.as_ref(), Key::Named(key::Named::Escape)) {
+            if let Some(tab) = self.active_tab_mut() {
+                if tab.editing.take().is_some() {
+                    return Task::none();
+                }
+            }
+        }
         if captured {
-            return Task::none();
+            // Atalhos da aplicação continuam valendo dentro do editor de célula.
+            let editing = self
+                .active_ws()
+                .is_some_and(|w| w.tabs[w.active_tab].editing.is_some());
+            if !editing {
+                return Task::none();
+            }
         }
         match commands::lookup(&key, physical, modifiers) {
             Some(command) => self.run_command(command),
@@ -1786,5 +2131,336 @@ fn layout_after_execution(
     }
     if !tab.run.from_grid {
         tab.pristine = None;
+    }
+}
+
+// ----------------------------------------------------------------------
+// Transações
+
+impl App {
+    fn tx_command(&mut self, id: &WorkspaceId, command: TxCommand) -> Task<Message> {
+        let Some(ws) = self.ws_by_id(id) else {
+            return Task::none();
+        };
+        let Some(handle) = ws.connection.clone() else {
+            return Task::none();
+        };
+        if ws.tx_busy {
+            return Task::none();
+        }
+        ws.tx_busy = true;
+        let id = id.clone();
+        Task::perform(async move { handle.transaction(command).await }, move |r| {
+            Message::TxFinished(id.clone(), command, r)
+        })
+    }
+
+    fn after_for(&self, ws: &WorkspaceId, closing: bool) -> AfterTx {
+        match (closing, self.closing_window) {
+            (true, Some(window)) => AfterTx::Close(window),
+            _ => AfterTx::Disconnect(ws.clone()),
+        }
+    }
+
+    /// Retoma o fechamento ou a desconexão depois que a transação foi
+    /// encerrada.
+    fn continue_after_tx(&mut self) -> Task<Message> {
+        match self.after_tx.take() {
+            Some(AfterTx::Close(window)) => self.update(Message::CloseRequested(window)),
+            Some(AfterTx::Disconnect(id)) => {
+                if let Some(index) = self.workspaces.iter().position(|w| w.desc.id == id) {
+                    return self.update(Message::Disconnect(index));
+                }
+                Task::none()
+            }
+            None => Task::none(),
+        }
+    }
+
+    fn run_pending(&mut self, pending: PendingExecution) -> Task<Message> {
+        let still_there = self
+            .active_ws()
+            .is_some_and(|w| w.desc.id == pending.ws && w.tabs[w.active_tab].id == pending.tab);
+        if !still_there {
+            self.notify("Transação iniciada; execute o arquivo novamente");
+            return Task::none();
+        }
+        self.start_execution(pending.sql, pending.base, pending.statements, false)
+    }
+}
+
+// ----------------------------------------------------------------------
+// Edição de dados pela grade (spec §6)
+
+/// Recalcula, para cada aba com resultado, se ele é editável.
+fn refresh_edit_targets(ws: &mut Workspace) {
+    let read_only = ws.read_only();
+    for tab in &mut ws.tabs {
+        tab.edit_target = tab.run.result.as_ref().map(|result| {
+            if read_only {
+                return Err("workspace somente leitura".to_string());
+            }
+            match &ws.catalog {
+                Some(catalog) => data_edit::edit_target(result, catalog),
+                None => Err("metadados ainda não carregados".to_string()),
+            }
+        });
+        if !matches!(tab.edit_target, Some(Ok(_))) {
+            tab.editing = None;
+        }
+    }
+}
+
+impl App {
+    fn has_pending(&self) -> bool {
+        self.active_ws().is_some_and(|w| {
+            !w.tabs[w.active_tab].pending.is_empty() || w.tabs[w.active_tab].editing.is_some()
+        })
+    }
+
+    /// Célula selecionada, se ela puder ser editada.
+    fn editable_selection(&self) -> Option<(usize, usize)> {
+        let ws = self.active_ws()?;
+        let tab = &ws.tabs[ws.active_tab];
+        let (row, col) = tab.selected?;
+        let Some(Ok(target)) = &tab.edit_target else {
+            return None;
+        };
+        target.columns.get(col)?.as_ref()?;
+        Some((row, col))
+    }
+
+    fn start_edit(&mut self, row: usize, col: usize) -> Task<Message> {
+        self.commit_edit();
+        let Some(tab) = self.active_tab_mut() else {
+            return Task::none();
+        };
+        tab.selected = Some((row, col));
+        let reason = match &tab.edit_target {
+            None => Some("execute a consulta primeiro".to_string()),
+            Some(Err(reason)) => Some(reason.clone()),
+            Some(Ok(target)) if target.columns.get(col).is_none_or(|c| c.is_none()) => {
+                Some("a coluna não corresponde a uma coluna da tabela".to_string())
+            }
+            Some(Ok(_)) => None,
+        };
+        if let Some(reason) = reason {
+            self.notify_error(format!("Resultado não editável: {reason}"));
+            return Task::none();
+        }
+        let Some(result) = &tab.run.result else {
+            return Task::none();
+        };
+        let text = match tab.pending.get(&(row, col)) {
+            Some(Some(v)) => v.clone(),
+            Some(None) => String::new(),
+            None => data_edit::edit_text(&result.rows[row][col]),
+        };
+        let input_id = iced::widget::Id::unique();
+        tab.editing = Some(state::CellEditor {
+            row,
+            col,
+            text,
+            input_id: input_id.clone(),
+        });
+        Task::batch([
+            operation::focus(input_id.clone()),
+            operation::select_all(input_id),
+        ])
+    }
+
+    /// Confirma a célula em edição como alteração pendente. Um texto igual ao
+    /// valor original desfaz a pendência.
+    fn commit_edit(&mut self) {
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        let Some(editor) = tab.editing.take() else {
+            return;
+        };
+        let Some(result) = &tab.run.result else {
+            return;
+        };
+        let original = &result.rows[editor.row][editor.col];
+        if !original.is_null() && data_edit::edit_text(original) == editor.text {
+            tab.pending.remove(&(editor.row, editor.col));
+        } else {
+            tab.pending
+                .insert((editor.row, editor.col), Some(editor.text));
+        }
+    }
+
+    fn build_pending_updates(
+        &mut self,
+    ) -> Result<(Vec<data_edit::RowUpdate>, data_edit::EditTarget), String> {
+        self.commit_edit();
+        let ws = self.active_ws().ok_or("nenhum workspace ativo")?;
+        let tab = &ws.tabs[ws.active_tab];
+        let result = tab.run.result.as_ref().ok_or("sem resultado")?;
+        let target = match &tab.edit_target {
+            Some(Ok(target)) => target.clone(),
+            Some(Err(reason)) => return Err(reason.clone()),
+            None => return Err("resultado não editável".into()),
+        };
+        Ok((
+            data_edit::build_updates(&target, result, &tab.pending)?,
+            target,
+        ))
+    }
+
+    fn open_grid_save(&mut self) -> Task<Message> {
+        match self.build_pending_updates() {
+            Ok((updates, _)) => {
+                let ws = self.active_ws().expect("workspace ativo");
+                let sql = updates
+                    .iter()
+                    .map(|u| u.display.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                self.modal = Some(Modal::GridSave {
+                    tab: ws.tabs[ws.active_tab].id,
+                    sql,
+                    error: None,
+                    running: false,
+                    needs_transaction: ws.require_transaction() && ws.tx != TxState::Active,
+                });
+            }
+            Err(e) => self.notify_error(format!("Não foi possível preparar as alterações: {e}")),
+        }
+        Task::none()
+    }
+
+    fn apply_pending(&mut self) -> Task<Message> {
+        let (updates, target) = match self.build_pending_updates() {
+            Ok(built) => built,
+            Err(e) => {
+                self.edit_failed(format!("Não foi possível preparar as alterações: {e}"));
+                return Task::none();
+            }
+        };
+        let Some(ws) = self.active_ws() else {
+            return Task::none();
+        };
+        let Some(handle) = ws.connection.clone() else {
+            self.edit_failed("Workspace desconectado".into());
+            return Task::none();
+        };
+        let tab = &ws.tabs[ws.active_tab];
+        let result = tab.run.result.as_ref().expect("resultado");
+        let table = format!("{}.{}", target.schema, target.table);
+
+        let mut log = Vec::new();
+        let mut statements = Vec::new();
+        let mut cells = Vec::new();
+        for u in &updates {
+            let key: Vec<String> = target
+                .key
+                .iter()
+                .map(|k| {
+                    format!(
+                        "{}={}",
+                        result.columns[*k].name,
+                        result.rows[u.row][*k].display()
+                    )
+                })
+                .collect();
+            let changes: Vec<String> = u
+                .columns
+                .iter()
+                .map(|c| {
+                    let before = &result.rows[u.row][*c];
+                    let before = if before.is_null() {
+                        "NULL".into()
+                    } else {
+                        before.display()
+                    };
+                    let after = tab.pending[&(u.row, *c)]
+                        .clone()
+                        .unwrap_or_else(|| "NULL".into());
+                    format!("{}: {before} → {after}", result.columns[*c].name)
+                })
+                .collect();
+            log.push(format!(
+                "{table} [{}] {}",
+                key.join(", "),
+                changes.join("; ")
+            ));
+            statements.push(connection::EditStatement {
+                sql: u.sql.clone(),
+                params: u.params.clone(),
+                label: format!("UPDATE {table} [{}]", key.join(", ")),
+            });
+            cells.push((u.row, u.columns.clone()));
+        }
+
+        let ws_id = ws.desc.id.clone();
+        let tab_id = tab.id;
+        Task::perform(
+            async move { handle.apply_edits(statements).await },
+            move |result| Message::EditsApplied {
+                ws: ws_id.clone(),
+                tab: tab_id,
+                cells: cells.clone(),
+                log: log.clone(),
+                result,
+            },
+        )
+    }
+
+    /// Erro ao gravar: aparece no popup, se aberto; senão na barra de status.
+    /// As alterações pendentes são mantidas.
+    fn edit_failed(&mut self, message: String) {
+        if let Some(Modal::GridSave { error, running, .. }) = &mut self.modal {
+            *error = Some(message);
+            *running = false;
+        } else {
+            self.notify_error(message);
+        }
+    }
+
+    fn on_edits_applied(
+        &mut self,
+        ws: WorkspaceId,
+        tab: u64,
+        cells: Vec<(usize, Vec<usize>)>,
+        log: Vec<String>,
+        result: Result<Vec<Vec<crate::query::Value>>, QueryError>,
+    ) -> Task<Message> {
+        let Some(w) = self.ws_by_id(&ws) else {
+            return Task::none();
+        };
+        w.sync_tx();
+        let in_transaction = w.tx == TxState::Active;
+        let written = match result {
+            Ok(written) => written,
+            Err(e) => {
+                self.edit_failed(format!("Alterações não gravadas: {}", describe_error(&e)));
+                return Task::none();
+            }
+        };
+        if in_transaction {
+            w.grid_log.extend(log);
+        }
+        let Some(t) = w.tabs.iter_mut().find(|t| t.id == tab) else {
+            return Task::none();
+        };
+        let rows = cells.len();
+        if let Some(rs) = &mut t.run.result {
+            for ((row, cols), values) in cells.into_iter().zip(written) {
+                for (col, value) in cols.into_iter().zip(values) {
+                    rs.rows[row][col] = value;
+                    t.pending.remove(&(row, col));
+                }
+            }
+        }
+        if matches!(self.modal, Some(Modal::GridSave { .. })) {
+            self.modal = None;
+        }
+        self.notify(if in_transaction {
+            format!("{rows} linha(s) alterada(s) na transação; use Confirmar… para gravar")
+        } else {
+            format!("{rows} linha(s) gravada(s)")
+        });
+        Task::none()
     }
 }

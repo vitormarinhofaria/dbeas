@@ -10,7 +10,8 @@ use iced::widget::Id;
 use iced::widget::scrollable::Viewport;
 use iced::widget::text_editor::Content;
 
-use crate::connection::{ConnectionHandle, Status};
+use crate::connection::{ConnectionHandle, Status, TxState};
+use crate::data_edit::{EditTarget, Pending};
 use crate::data_grid::ScrollState;
 use crate::file_explorer::FileEntry;
 use crate::metadata::Catalog;
@@ -33,6 +34,12 @@ pub struct Workspace {
     pub files: FilesState,
     pub tabs: Vec<Tab>,
     pub active_tab: usize,
+    /// Estado da transação, espelhado da conexão após cada resposta.
+    pub tx: TxState,
+    /// Um comando de transação está em andamento.
+    pub tx_busy: bool,
+    /// Alterações feitas pela grade na transação atual (para o resumo).
+    pub grid_log: Vec<String>,
 }
 
 #[derive(Default)]
@@ -67,6 +74,9 @@ impl Workspace {
             files: FilesState::default(),
             tabs,
             active_tab,
+            tx: TxState::Idle,
+            tx_busy: false,
+            grid_log: Vec::new(),
         }
     }
 
@@ -88,7 +98,27 @@ impl Workspace {
 
     /// Libera recursos transitórios. Resultados ficam visíveis, mas os
     /// cursores deixam de existir.
+    pub fn require_transaction(&self) -> bool {
+        self.desc
+            .config
+            .as_ref()
+            .is_ok_and(|c| c.require_transaction)
+    }
+
+    /// Atualiza o estado da transação a partir da conexão.
+    pub fn sync_tx(&mut self) {
+        if let Some(handle) = &self.connection {
+            self.tx = handle.tx_state();
+        }
+        if self.tx == TxState::Idle {
+            self.grid_log.clear();
+        }
+    }
+
     pub fn disconnect(&mut self) {
+        self.tx = TxState::Idle;
+        self.tx_busy = false;
+        self.grid_log.clear();
         self.connection = None;
         self.status = Status::Disconnected;
         self.catalog_loading = false;
@@ -128,6 +158,20 @@ pub struct Tab {
     pub pristine: Option<String>,
     /// O SQL foi gerado pela aplicação e não foi editado pelo usuário.
     pub generated: bool,
+    /// Tabela para a qual o resultado é editável, ou o motivo de não ser.
+    pub edit_target: Option<Result<EditTarget, String>>,
+    /// Alterações pendentes da grade, separadas dos valores originais.
+    pub pending: Pending,
+    /// Célula em edição.
+    pub editing: Option<CellEditor>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CellEditor {
+    pub row: usize,
+    pub col: usize,
+    pub text: String,
+    pub input_id: Id,
 }
 
 /// Disposição visual das colunas da grade (spec §5.2–5.4).
@@ -220,6 +264,9 @@ impl Tab {
             source: None,
             pristine: None,
             generated: false,
+            edit_target: None,
+            pending: Pending::new(),
+            editing: None,
         }
     }
 

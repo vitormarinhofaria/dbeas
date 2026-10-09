@@ -30,7 +30,8 @@ decidido.
 - [Transformações de SQL](arquitetura/transformacoes-sql.md) — ordenar/ocultar/reordenar pela grade: mecanismo, regras de recusa, integração.
 - [Regras do dbeas.json](configuracao/dbeas-json.md) — validação, interpolação e padrões como implementados.
 - [Atalhos](usabilidade/atalhos.md) — mapa central e conflitos documentados.
-- [Transações (requireTransaction)](usabilidade/transacoes.md) — decisão: transação manual com botões; grade, SQL manual e arquivos participam. Não implementado.
+- [Transações (requireTransaction)](usabilidade/transacoes.md) — transação manual com botões; grade, SQL manual e arquivos participam; resumo antes do COMMIT.
+- [Edição de dados](usabilidade/edicao-dados.md) — quando um resultado é editável, interação, Ctrl+S/Ctrl+Shift+S, execução parametrizada.
 - [Quando SQL é executado](usabilidade/execucao-sql.md) — conexão, abertura de tabela, nada de execução automática de SQL do usuário.
 
 - [Identificação do workspace na barra lateral](usabilidade/identificacao-workspace-sidebar.md) — usar `name` da entrada do `dbeas.json`, não o nome do arquivo.

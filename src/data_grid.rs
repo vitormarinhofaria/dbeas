@@ -7,9 +7,12 @@
 
 use iced::widget::scrollable::{Direction, Scrollbar, Viewport};
 use iced::widget::text::Wrapping;
-use iced::widget::{Column, Id, Row, column, container, mouse_area, scrollable, space, text};
+use iced::widget::{
+    Column, Id, Row, column, container, mouse_area, scrollable, space, text, text_input,
+};
 use iced::{Color, Element, Font, Length, Theme};
 
+use crate::data_edit::Pending;
 use crate::query::{ResultSet, Value};
 
 pub const ROW_HEIGHT: f32 = 24.0;
@@ -90,6 +93,13 @@ pub struct GridView<'a, M> {
     pub on_header_release: fn(usize) -> M,
     /// Botão do meio sobre um cabeçalho oculta a coluna.
     pub on_header_middle: fn(usize) -> M,
+    /// Alterações pendentes (linha, coluna) → novo valor (`None` = NULL).
+    pub pending: &'a Pending,
+    /// Célula em edição: linha, coluna, texto e id do campo.
+    pub editing: Option<(usize, usize, &'a str, Id)>,
+    pub on_double_click: fn(usize, usize) -> M,
+    pub on_edit_input: fn(String) -> M,
+    pub on_edit_submit: M,
 }
 
 pub fn view<'a, M: Clone + 'a>(g: GridView<'a, M>) -> Element<'a, M> {
@@ -209,22 +219,47 @@ fn header_cell<'a, M: 'a>(
 }
 
 fn data_row<'a, M: Clone + 'a>(g: &GridView<'a, M>, index: usize) -> Element<'a, M> {
+    let row_changed = g.pending.range((index, 0)..(index + 1, 0)).next().is_some();
+    let label = if row_changed {
+        format!("● {}", index + 1)
+    } else {
+        (index + 1).to_string()
+    };
     let mut r = Row::new().height(ROW_HEIGHT).push(
-        container(
-            text((index + 1).to_string())
-                .size(12)
-                .style(muted)
-                .font(Font::MONOSPACE),
-        )
-        .width(ROW_NUMBER_WIDTH)
-        .height(ROW_HEIGHT)
-        .padding([3, 6])
-        .style(row_number_style),
+        container(text(label).size(12).style(muted).font(Font::MONOSPACE))
+            .width(ROW_NUMBER_WIDTH)
+            .height(ROW_HEIGHT)
+            .padding([3, 6])
+            .style(row_number_style),
     );
     for &col in g.order {
         let width = &g.widths[col];
-        let value = &g.result.rows[index][col];
         let selected = g.selected == Some((index, col));
+        if let Some((_, _, current, id)) = g.editing.as_ref().filter(|e| e.0 == index && e.1 == col)
+        {
+            let input = text_input("", current)
+                .id(id.clone())
+                .on_input(g.on_edit_input)
+                .on_submit(g.on_edit_submit.clone())
+                .font(Font::MONOSPACE)
+                .size(13)
+                .padding([2, 4])
+                .width(*width);
+            r = r.push(container(input).width(*width).height(ROW_HEIGHT));
+            continue;
+        }
+        let changed = g.pending.get(&(index, col));
+        let display_null = Value::Null;
+        let edited_value;
+        let value = match changed {
+            Some(None) => &display_null,
+            Some(Some(text)) => {
+                edited_value = Value::Text(text.clone());
+                &edited_value
+            }
+            None => &g.result.rows[index][col],
+        };
+        let changed = changed.is_some();
         let content: Element<'a, M> = if value.is_null() {
             text("NULL")
                 .size(13)
@@ -246,8 +281,12 @@ fn data_row<'a, M: Clone + 'a>(g: &GridView<'a, M>, index: usize) -> Element<'a,
             .height(ROW_HEIGHT)
             .padding([3, 6])
             .clip(true)
-            .style(move |theme: &Theme| cell_style(theme, index, selected));
-        r = r.push(mouse_area(cell).on_press((g.on_select)(index, col)));
+            .style(move |theme: &Theme| cell_style(theme, index, selected, changed));
+        r = r.push(
+            mouse_area(cell)
+                .on_press((g.on_select)(index, col))
+                .on_double_click((g.on_double_click)(index, col)),
+        );
     }
     r.into()
 }
@@ -270,9 +309,19 @@ fn row_number_style(theme: &Theme) -> container::Style {
     }
 }
 
-fn cell_style(theme: &Theme, row: usize, selected: bool) -> container::Style {
+fn cell_style(theme: &Theme, row: usize, selected: bool, changed: bool) -> container::Style {
     let p = theme.extended_palette();
-    let background = if selected {
+    let background = if changed && selected {
+        Color {
+            a: 0.55,
+            ..p.warning.base.color
+        }
+    } else if changed {
+        Color {
+            a: 0.3,
+            ..p.warning.base.color
+        }
+    } else if selected {
         p.primary.weak.color
     } else if row % 2 == 1 {
         p.background.weakest.color

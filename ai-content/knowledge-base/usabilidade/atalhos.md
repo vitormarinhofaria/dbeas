@@ -8,7 +8,8 @@ está focado. Fora do editor, só disparam se nenhum widget capturou a tecla.
 | --- | --- |
 | Ctrl+Enter | Executar a seleção ou, sem seleção, a instrução sob o cursor |
 | Ctrl+Shift+Enter | Executar o script inteiro |
-| Ctrl+S | Salvar o arquivo SQL da aba |
+| Ctrl+S | Com alterações na grade: popup com o SQL; senão, salvar o arquivo SQL |
+| Ctrl+Shift+S | Executar as alterações da grade sem popup |
 | Ctrl+. | Cancelar a consulta em andamento |
 | Ctrl+P | Seletor rápido (tabelas/views/arquivos do workspace ativo) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Próximo/anterior workspace (circular) |
@@ -18,11 +19,11 @@ está focado. Fora do editor, só disparam se nenhum widget capturou a tecla.
 
 ## Conflitos documentados
 
-- **Ctrl+S:** a spec (§6.2) reserva o atalho para preparar alterações da grade. Hoje
-  ele salva o arquivo SQL. Quando a edição de dados existir: com alterações
-  pendentes na grade, Ctrl+S abre o popup; sem elas, salva o arquivo.
-- **Ctrl+Shift+S:** reservado para executar alterações direto (ainda não
-  implementado).
+- **Ctrl+S:** com alterações pendentes na grade, abre o popup (spec §6.2); sem
+  elas, salva o arquivo SQL da aba.
+- **No editor de célula**, os atalhos da aplicação continuam valendo (o campo de
+  texto captura as teclas, mas o mapa central é consultado mesmo assim); Esc
+  cancela a edição.
 - **Ctrl+Tab** troca workspace, e não aba, por decisão da spec (§9).
 
 ## Mouse na grade
@@ -33,3 +34,4 @@ está focado. Fora do editor, só disparam se nenhum widget capturou a tecla.
 | Botão do meio no cabeçalho | Oculta a coluna e a remove do SELECT, quando seguro |
 | Arrastar cabeçalho e soltar sobre outro | Move a coluna e reordena o SELECT, quando seguro |
 | Botão "Restaurar colunas" | Mostra de novo as colunas ocultas e restaura o SQL |
+| Duplo clique na célula | Edita o valor (resultado editável) |

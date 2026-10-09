@@ -3,7 +3,7 @@
 Arquivo de continuidade: leia antes de retomar o trabalho com um contexto novo.
 Atualize ao fim de cada etapa.
 
-**Última atualização:** 2026-10-09 (rodada 2 — transformações de SQL pela grade)
+**Última atualização:** 2026-10-09 (rodada 3 — transações e edição de dados)
 
 ## Como rodar e testar
 
@@ -11,7 +11,7 @@ Atualize ao fim de cada etapa.
   `~/.local/state/dbeas/session.json`.
 - Para não tocar na configuração real, isole com
   `XDG_CONFIG_HOME=/tmp/x/config XDG_STATE_HOME=/tmp/x/state cargo run`.
-- `cargo test` — testes unitários (52).
+- `cargo test` — testes unitários (57) + 7 de integração com PG.
 - Testes com PostgreSQL real (`tests/postgres.rs`), ignorados sem a variável:
   ```
   docker run -d --name dbeas-test-pg -e POSTGRES_PASSWORD=dbeas -e POSTGRES_USER=dbeas \
@@ -52,17 +52,32 @@ Atualize ao fim de cada etapa.
 | Restaurar colunas, recusa segura com explicação, origem gerada/editada | implementado | `App::restore_columns` |
 | Sessão guarda colunas ocultas e ordenação por aba | pronto, testado | `src/session.rs` |
 
+## Feito (rodada 3 — transações e edição de dados)
+
+- [x] `classify::transaction_control` (BEGIN/COMMIT/ROLLBACK/... por análise léxica).
+- [x] Catálogo com `oid` da tabela e `attnum` das colunas.
+- [x] `src/data_edit.rs`: tabela editável (uma tabela, com PK, todas as colunas da PK
+  no resultado), `UPDATE ... RETURNING` parametrizado (`$n::text::tipo`) e texto
+  equivalente com literais para o popup.
+- [x] Ator: `TxState` (Idle/Active/Failed) publicado num `watch`, política do
+  `requireTransaction` por instrução, `transaction(Begin/Commit/Rollback)`,
+  `summary()` (`pg_stat_xact_user_tables` + registro), `apply_edits` (savepoint na
+  transação ativa; bloco próprio fora de `requireTransaction`). Testado com PG.
+- [x] UI de transação: indicador e botões no cabeçalho (Iniciar / Cancelar /
+  Confirmar…; "transação com erro" só oferece Cancelar), resumo antes do COMMIT
+  (verificado no app), confirmação para executar arquivo salvo, bloqueio ao
+  fechar/desconectar (implementado, sem teste de clique).
+- [x] UI de edição: duplo clique edita, NULL, destaque de pendências, reverter
+  célula/tudo, Ctrl+S com popup (verificado no app), Ctrl+Shift+S. Ver
+  [edição de dados](../usabilidade/edicao-dados.md).
+
 ## Pendente (próximas rodadas)
 
 1. ~~Transformações de SQL~~ — feito na rodada 2 (ver
    [transformações](../arquitetura/transformacoes-sql.md)).
-2. **Edição de dados** (§6): mapear o resultado para uma tabela (`ColumnInfo.table_oid`
-   / `column_id` + PK do catálogo), alterações pendentes, `Ctrl+S` com popup de SQL,
-   `Ctrl+Shift+S` direto, bloqueio em `readOnly`.
-3. **requireTransaction** (§6.4): a política foi decidida (transação manual com
-   botões Iniciar/Confirmar/Cancelar; grade, SQL manual e arquivos participam). Ver
-   [transações](../usabilidade/transacoes.md). Todas as perguntas foram respondidas;
-   pronto para implementar. Hoje o SQL do editor roda em autocommit.
+2. ~~Edição de dados~~ — feito na rodada 3 (ver [edição](../usabilidade/edicao-dados.md)).
+   Falta: inserir/excluir linhas.
+3. ~~requireTransaction~~ — feito na rodada 3 (ver [transações](../usabilidade/transacoes.md)).
 4. **LSP / autocomplete / diagnósticos antes da execução** (§7.2): hoje a barra de
    status informa "indisponível". O catálogo já tem tudo para autocomplete local.
 5. TLS (`sslMode`) — decidido adiar; conexão usa `NoTls`.
@@ -71,6 +86,10 @@ Atualize ao fim de cada etapa.
    arraste do divisor é aproximada (`CHROME_HEIGHT`).
 7. Grade: soltar o arraste de cabeçalho fora da grade deixa o cabeçalho destacado
    até o próximo clique; reordenações só visuais se perdem ao reexecutar.
+8. Transações: o estado é rastreado pelas instruções executadas (o tokio-postgres
+   não expõe o status do ReadyForQuery). COMMIT dentro de função/procedure ou
+   `DO` não é detectado. Resultado paginado e transação compartilham a conexão: um
+   novo comando fecha o cursor do resultado anterior.
 
 ## Ver também
 
@@ -81,3 +100,4 @@ Atualize ao fim de cada etapa.
 - [Atalhos](../usabilidade/atalhos.md)
 - [Execução de SQL](../usabilidade/execucao-sql.md)
 - [Transações](../usabilidade/transacoes.md)
+- [Edição de dados](../usabilidade/edicao-dados.md)

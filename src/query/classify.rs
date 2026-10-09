@@ -101,9 +101,113 @@ fn first_words(s: &str) -> String {
     s.split_whitespace().take(2).collect::<Vec<_>>().join(" ")
 }
 
+/// Comando de controle de transação no início de uma instrução.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TxControl {
+    /// `BEGIN`, `START TRANSACTION`.
+    Begin,
+    /// `COMMIT`, `END`, `COMMIT AND CHAIN` etc. Num bloco com erro, o
+    /// PostgreSQL transforma o COMMIT em ROLLBACK; o efeito é encerrar o bloco.
+    Commit,
+    /// `ROLLBACK`, `ABORT` (sem `TO SAVEPOINT`).
+    Rollback,
+    /// `ROLLBACK TO [SAVEPOINT]`: desfaz até o savepoint e tira a transação do
+    /// estado de erro.
+    RollbackToSavepoint,
+    /// `SAVEPOINT`, `RELEASE`, `PREPARE TRANSACTION`, `COMMIT/ROLLBACK PREPARED`,
+    /// `SET TRANSACTION`.
+    Other,
+}
+
+/// Classificação léxica pelas primeiras palavras, depois de espaços e
+/// comentários. Não depende do parser, para funcionar também com SQL que ele
+/// não entende.
+pub fn transaction_control(sql: &str) -> Option<TxControl> {
+    let words = leading_words(sql, 3);
+    let w: Vec<&str> = words.iter().map(String::as_str).collect();
+    match w.as_slice() {
+        ["begin", ..] | ["start", "transaction", ..] => Some(TxControl::Begin),
+        ["commit", "prepared", ..] | ["rollback", "prepared", ..] => Some(TxControl::Other),
+        ["commit", ..] | ["end", ..] => Some(TxControl::Commit),
+        ["rollback" | "abort", "to", ..]
+        | ["rollback" | "abort", "work" | "transaction", "to", ..] => {
+            Some(TxControl::RollbackToSavepoint)
+        }
+        ["rollback" | "abort", ..] => Some(TxControl::Rollback),
+        ["savepoint", ..] | ["release", ..] | ["prepare", "transaction", ..] => {
+            Some(TxControl::Other)
+        }
+        ["set", "transaction", ..] | ["set", "session", "characteristics", ..] => {
+            Some(TxControl::Other)
+        }
+        _ => None,
+    }
+}
+
+fn leading_words(sql: &str, count: usize) -> Vec<String> {
+    let bytes = sql.as_bytes();
+    let mut words = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() && words.len() < count {
+        match bytes[i] {
+            b'-' if bytes.get(i + 1) == Some(&b'-') => {
+                i = sql[i..].find('\n').map_or(bytes.len(), |p| i + p + 1);
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i = sql[i + 2..]
+                    .find("*/")
+                    .map_or(bytes.len(), |p| i + 2 + p + 2);
+            }
+            c if c.is_ascii_alphabetic() || c == b'_' => {
+                let start = i;
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                    i += 1;
+                }
+                words.push(sql[start..i].to_ascii_lowercase());
+            }
+            c if c.is_ascii_whitespace() => i += 1,
+            _ => break,
+        }
+    }
+    words
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_transaction_control() {
+        assert_eq!(
+            transaction_control("  -- c\n BEGIN;"),
+            Some(TxControl::Begin)
+        );
+        assert_eq!(
+            transaction_control("start transaction isolation level serializable"),
+            Some(TxControl::Begin)
+        );
+        assert_eq!(
+            transaction_control("/* x */ commit"),
+            Some(TxControl::Commit)
+        );
+        assert_eq!(transaction_control("END"), Some(TxControl::Commit));
+        assert_eq!(transaction_control("rollback"), Some(TxControl::Rollback));
+        assert_eq!(
+            transaction_control("ROLLBACK TO SAVEPOINT a"),
+            Some(TxControl::RollbackToSavepoint)
+        );
+        assert_eq!(
+            transaction_control("rollback work to a"),
+            Some(TxControl::RollbackToSavepoint)
+        );
+        assert_eq!(transaction_control("savepoint a"), Some(TxControl::Other));
+        assert_eq!(
+            transaction_control("commit prepared 'x'"),
+            Some(TxControl::Other)
+        );
+        assert_eq!(transaction_control("select 'begin'"), None);
+        assert_eq!(transaction_control("update t set commit = 1"), None);
+    }
 
     #[test]
     fn allows_reads() {

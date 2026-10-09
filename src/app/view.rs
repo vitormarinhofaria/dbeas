@@ -10,7 +10,7 @@ use super::quick_open::{QuickOpen, Target};
 use super::state::{Tab, Workspace};
 use super::{App, CloseChoice, DragTarget, Message, Modal};
 use crate::commands::{Command, SHORTCUTS};
-use crate::connection::Status;
+use crate::connection::{Status, TxState};
 use crate::data_grid::{self, GridView};
 use crate::metadata::RelationKind;
 use crate::session::{ExplorerMode, TabKind};
@@ -159,7 +159,8 @@ impl App {
                 if c.require_transaction {
                     info = info.push(badge(
                         "transação obrigatória",
-                        "Alterações de dados pela grade exigirão COMMIT/ROLLBACK explícitos (próxima etapa).",
+                        "Escritas (SQL manual, grade e arquivos) só rodam dentro de uma transação \
+                         iniciada pelo botão. Consultas de leitura rodam sem transação.",
                     ));
                 }
             }
@@ -178,8 +179,12 @@ impl App {
             _ => Space::new().into(),
         };
 
-        let mut col =
-            column![row![info, space::horizontal(), action].align_y(Alignment::Center)].spacing(4);
+        let mut col = column![
+            row![info, space::horizontal(), transaction_controls(ws), action]
+                .spacing(8)
+                .align_y(Alignment::Center)
+        ]
+        .spacing(4);
         if let Some(error) = ws.connection_error.as_ref() {
             col = col.push(text(error).size(13).style(danger_text));
         } else if let Err(error) = &ws.desc.config {
@@ -333,6 +338,108 @@ impl App {
 
     fn modal_view<'a>(&'a self, modal: &'a Modal) -> Element<'a, Message> {
         let body: Element<'a, Message> = match modal {
+            Modal::Commit { ws, summary, grid } => commit_view(ws, summary.as_ref(), grid),
+            Modal::PendingTransaction {
+                name,
+                failed,
+                closing,
+                ..
+            } => {
+                let action = if *closing { "fechar a aplicação" } else { "desconectar" };
+                let mut buttons = row![
+                    space::horizontal(),
+                    button(text(if *closing { "Cancelar fechamento" } else { "Cancelar" }))
+                        .on_press(Message::CloseModal)
+                        .style(button::secondary),
+                    button(text("Abortar (ROLLBACK)"))
+                        .on_press(Message::PendingTxRollback)
+                        .style(button::danger),
+                ]
+                .spacing(8);
+                if !failed {
+                    buttons = buttons.push(button(text("Confirmar…")).on_press(Message::PendingTxCommit));
+                }
+                column![
+                    text("Transação em aberto").size(18).font(BOLD),
+                    text(format!(
+                        "O workspace {name} tem uma transação {}. Antes de {action}, confirme ou aborte.",
+                        if *failed { "com erro" } else { "ativa" }
+                    ))
+                    .size(13),
+                    buttons,
+                ]
+                .spacing(10)
+                .into()
+            }
+            Modal::GridSave {
+                sql,
+                error,
+                running,
+                needs_transaction,
+                ..
+            } => {
+                let mut col = column![
+                    text("Alterações pendentes").size(18).font(BOLD),
+                    text("SQL que será executado (valores enviados como parâmetros):")
+                        .size(13)
+                        .style(muted),
+                    container(scrollable(text(sql).font(Font::MONOSPACE).size(12)).height(Length::Shrink))
+                        .padding(8)
+                        .max_height(320)
+                        .width(Length::Fill)
+                        .style(container::bordered_box),
+                ]
+                .spacing(10);
+                if *needs_transaction {
+                    let begin = self.active_ws().map(|w| Message::TxBegin(w.desc.id.clone()));
+                    col = col.push(
+                        row![
+                            text("Este workspace exige transação para gravar alterações.")
+                                .size(13)
+                                .style(danger_text),
+                            space::horizontal(),
+                            button(text("Iniciar transação").size(13)).on_press_maybe(begin),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    );
+                }
+                if let Some(e) = error {
+                    col = col.push(text(e).size(13).style(danger_text));
+                }
+                col.push(
+                    row![
+                        button(text("Cancelar e reverter"))
+                            .on_press(Message::GridSaveDiscard)
+                            .style(button::danger),
+                        space::horizontal(),
+                        button(text("Copiar e fechar"))
+                            .on_press(Message::GridSaveCopy)
+                            .style(button::secondary),
+                        button(text(if *running { "Executando…" } else { "Executar e fechar" }))
+                            .on_press_maybe((!*running && !*needs_transaction).then_some(Message::GridSaveExecute))
+                            .style(button::success),
+                    ]
+                    .spacing(8),
+                )
+                .into()
+            }
+            Modal::RunFileInTransaction { title } => column![
+                text("Executar em transação").size(18).font(BOLD),
+                text(format!(
+                    "Este workspace exige transação. {title} será executado dentro de uma transação \
+                     nova, que ficará aberta até você confirmar (COMMIT) ou cancelar (ROLLBACK)."
+                ))
+                .size(13),
+                row![
+                    space::horizontal(),
+                    button(text("Cancelar")).on_press(Message::CloseModal).style(button::secondary),
+                    button(text("Iniciar transação e executar")).on_press(Message::ConfirmRunFile),
+                ]
+                .spacing(8),
+            ]
+            .spacing(10)
+            .into(),
             Modal::AddWorkspace { path, error } => {
                 let mut col = column![
                     text("Adicionar workspace").size(18).font(BOLD),
@@ -418,7 +525,8 @@ impl App {
         };
         container(body)
             .padding(20)
-            .width(560)
+            .width(640)
+            .max_height((self.window_height - 80.0).max(240.0))
             .style(container::rounded_box)
             .into()
     }
@@ -466,6 +574,148 @@ fn workspace_item(index: usize, ws: &Workspace, active: bool) -> Element<'_, Mes
         tooltip::Position::Right,
     )
     .into()
+}
+
+fn transaction_controls(ws: &Workspace) -> Element<'_, Message> {
+    if ws.connection.is_none() || (!ws.require_transaction() && ws.tx == TxState::Idle) {
+        return Space::new().into();
+    }
+    let id = ws.desc.id.clone();
+    let busy = ws.tx_busy;
+    let mut controls = row![].spacing(6).align_y(Alignment::Center);
+    match ws.tx {
+        TxState::Idle => {
+            controls = controls.push(
+                button(text("Iniciar transação").size(13))
+                    .on_press_maybe((!busy).then(|| Message::TxBegin(id.clone()))),
+            );
+        }
+        TxState::Active => {
+            controls = controls
+                .push(
+                    text("● transação ativa")
+                        .size(13)
+                        .color(Color::from_rgb(0.95, 0.75, 0.3)),
+                )
+                .push(
+                    button(text("Cancelar").size(13))
+                        .on_press_maybe((!busy).then(|| Message::TxRollback(id.clone())))
+                        .style(button::danger),
+                )
+                .push(
+                    button(text("Confirmar…").size(13))
+                        .on_press_maybe((!busy).then(|| Message::TxRequestCommit(id.clone())))
+                        .style(button::success),
+                );
+        }
+        TxState::Failed => {
+            controls = controls
+                .push(tooltip(
+                    text("✕ transação com erro").size(13).style(danger_text),
+                    container(
+                        text(
+                            "Um comando falhou dentro da transação. O PostgreSQL rejeita os \
+                              próximos comandos até o ROLLBACK.",
+                        )
+                        .size(12),
+                    )
+                    .padding(6)
+                    .max_width(320)
+                    .style(container::rounded_box),
+                    tooltip::Position::Bottom,
+                ))
+                .push(
+                    button(text("Cancelar (ROLLBACK)").size(13))
+                        .on_press_maybe((!busy).then(|| Message::TxRollback(id.clone())))
+                        .style(button::danger),
+                );
+        }
+    }
+    controls.into()
+}
+
+fn commit_view<'a>(
+    ws: &'a crate::workspace::WorkspaceId,
+    summary: Option<&'a Result<crate::connection::TxSummary, String>>,
+    grid: &'a [String],
+) -> Element<'a, Message> {
+    let mut body = column![text("Confirmar transação").size(18).font(BOLD)].spacing(10);
+    match summary {
+        None => body = body.push(text("Carregando resumo…").size(13).style(muted)),
+        Some(Err(e)) => body = body.push(text(e).size(13).style(danger_text)),
+        Some(Ok(summary)) => {
+            let mut tables =
+                column![text("Linhas alteradas por tabela").size(14).font(BOLD)].spacing(2);
+            if summary.tables.is_empty() {
+                tables = tables.push(
+                    text("Nenhuma linha inserida, alterada ou removida.")
+                        .size(13)
+                        .style(muted),
+                );
+            }
+            for t in &summary.tables {
+                tables = tables.push(
+                    row![
+                        text(format!("{}.{}", t.schema, t.table))
+                            .size(13)
+                            .font(Font::MONOSPACE)
+                            .width(Length::Fill),
+                        text(format!("+{}  ~{}  -{}", t.inserted, t.updated, t.deleted))
+                            .size(13)
+                            .font(Font::MONOSPACE),
+                    ]
+                    .spacing(8),
+                );
+            }
+            body = body.push(tables);
+
+            let mut statements =
+                column![text("Instruções executadas").size(14).font(BOLD)].spacing(2);
+            if summary.statements.is_empty() {
+                statements = statements.push(
+                    text("Nenhuma instrução de escrita registrada.")
+                        .size(13)
+                        .style(muted),
+                );
+            }
+            for st in &summary.statements {
+                statements = statements.push(text(st).size(12).font(Font::MONOSPACE));
+            }
+            body = body.push(statements);
+
+            if !grid.is_empty() {
+                let mut edits =
+                    column![text("Alterações pela grade").size(14).font(BOLD)].spacing(2);
+                for g in grid {
+                    edits = edits.push(text(g).size(12).font(Font::MONOSPACE));
+                }
+                body = body.push(edits);
+            }
+            body = body.push(
+                text("Contagens vêm de pg_stat_xact_user_tables e incluem efeitos de triggers. DDL e TRUNCATE \
+                      aparecem apenas na lista de instruções.")
+                .size(11)
+                .style(muted),
+            );
+        }
+    }
+    let ready = matches!(summary, Some(Ok(_)));
+    let buttons = row![
+        space::horizontal(),
+        button(text("Voltar"))
+            .on_press(Message::CloseModal)
+            .style(button::secondary),
+        button(text("Reverter (ROLLBACK)"))
+            .on_press(Message::TxRollback(ws.clone()))
+            .style(button::danger),
+        button(text("Confirmar (COMMIT)"))
+            .on_press_maybe(ready.then(|| Message::TxCommit(ws.clone())))
+            .style(button::success),
+    ]
+    .spacing(8);
+    column![scrollable(body).height(Length::Shrink), buttons]
+        .spacing(12)
+        .into()
 }
 
 fn status_dot<'a>(status: Status) -> Element<'a, Message> {
@@ -833,6 +1083,9 @@ fn results_panel<'a>(ws: &'a Workspace, tab: &'a Tab) -> Element<'a, Message> {
     }
 
     let mut col = column![container(toolbar).padding([4, 8])].spacing(0);
+    if let Some(edit) = edit_bar(tab) {
+        col = col.push(container(edit).padding([0, 8]));
+    }
 
     if let Some(error) = &run.error {
         let position = error
@@ -885,6 +1138,14 @@ fn results_panel<'a>(ws: &'a Workspace, tab: &'a Tab) -> Element<'a, Message> {
             on_header_press: Message::HeaderPressed,
             on_header_release: Message::HeaderReleased,
             on_header_middle: Message::HideColumn,
+            pending: &tab.pending,
+            editing: tab
+                .editing
+                .as_ref()
+                .map(|e| (e.row, e.col, e.text.as_str(), e.input_id.clone())),
+            on_double_click: Message::StartEdit,
+            on_edit_input: Message::EditInput,
+            on_edit_submit: Message::CommitEdit,
         }),
         _ => center(
             text(if ws.connection.is_none() {
@@ -898,6 +1159,91 @@ fn results_panel<'a>(ws: &'a Workspace, tab: &'a Tab) -> Element<'a, Message> {
         .into(),
     };
     col.push(grid).height(Length::Fill).into()
+}
+
+/// Barra de edição: alvo editável, célula selecionada e pendências.
+fn edit_bar(tab: &Tab) -> Option<Element<'_, Message>> {
+    let result = tab.run.result.as_ref()?;
+    let target = tab.edit_target.as_ref()?;
+    let mut bar = row![].spacing(6).align_y(Alignment::Center);
+    match target {
+        Err(reason) => {
+            bar = bar.push(
+                text(format!("Resultado não editável: {reason}"))
+                    .size(12)
+                    .style(muted),
+            );
+        }
+        Ok(target) => {
+            bar = bar.push(
+                text(format!(
+                    "Editável: {}.{} (duplo clique na célula)",
+                    target.schema, target.table
+                ))
+                .size(12)
+                .style(muted),
+            );
+            if let Some((row, col)) = tab.selected {
+                if target.columns.get(col).is_some_and(Option::is_some) {
+                    let original = &result.rows[row][col];
+                    let original = if original.is_null() {
+                        "NULL".to_string()
+                    } else {
+                        data_grid::cell_text(original)
+                    };
+                    match tab.pending.get(&(row, col)) {
+                        Some(new) => {
+                            let new = new.clone().unwrap_or_else(|| "NULL".into());
+                            bar = bar
+                                .push(text(format!("original: {original} → novo: {new}")).size(12));
+                            bar = bar.push(
+                                button(text("Reverter célula").size(12))
+                                    .on_press(Message::RevertCell)
+                                    .padding([2, 8])
+                                    .style(button::secondary),
+                            );
+                        }
+                        None => {
+                            bar = bar.push(text(format!("valor: {original}")).size(12).style(muted))
+                        }
+                    }
+                    bar = bar
+                        .push(
+                            button(text("Editar").size(12))
+                                .on_press(Message::StartEdit(row, col))
+                                .padding([2, 8])
+                                .style(button::secondary),
+                        )
+                        .push(
+                            button(text("NULL").size(12))
+                                .on_press(Message::SetNull)
+                                .padding([2, 8])
+                                .style(button::secondary),
+                        );
+                }
+            }
+            if !tab.pending.is_empty() {
+                bar = bar
+                    .push(space::horizontal())
+                    .push(
+                        text(format!("{} alteração(ões) pendente(s)", tab.pending.len())).size(12),
+                    )
+                    .push(
+                        button(text("Reverter tudo").size(12))
+                            .on_press(Message::RevertAll)
+                            .padding([2, 8])
+                            .style(button::danger),
+                    )
+                    .push(
+                        button(text("Revisar (Ctrl+S)").size(12))
+                            .on_press(Message::Command(Command::Save))
+                            .padding([2, 8])
+                            .style(button::success),
+                    );
+            }
+        }
+    }
+    Some(bar.into())
 }
 
 fn quick_open_view(q: &QuickOpen) -> Element<'_, Message> {

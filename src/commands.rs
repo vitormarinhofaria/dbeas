@@ -13,8 +13,11 @@ pub enum Command {
     ExecuteCurrent,
     /// Executa todas as instruções do editor, em ordem.
     ExecuteScript,
-    /// Salva o arquivo SQL da aba ativa.
+    /// Com alterações pendentes na grade: mostra o SQL para confirmação. Sem
+    /// elas: salva o arquivo SQL da aba ativa.
     Save,
+    /// Executa direto as alterações pendentes da grade, sem popup.
+    SaveDirect,
     /// Cancela a consulta em andamento na aba ativa.
     CancelQuery,
     QuickOpen,
@@ -46,7 +49,12 @@ pub const SHORTCUTS: &[Shortcut] = &[
     Shortcut {
         keys: "Ctrl+S",
         command: Command::Save,
-        description: "Salvar arquivo SQL",
+        description: "Revisar alterações da grade (ou salvar arquivo SQL)",
+    },
+    Shortcut {
+        keys: "Ctrl+Shift+S",
+        command: Command::SaveDirect,
+        description: "Executar alterações da grade sem popup",
     },
     Shortcut {
         keys: "Ctrl+.",
@@ -94,6 +102,12 @@ pub fn lookup(key: &Key, physical: key::Physical, modifiers: Modifiers) -> Optio
         Key::Named(key::Named::Tab) if ctrl && shift => Some(Command::PreviousWorkspace),
         Key::Named(key::Named::Tab) if ctrl => Some(Command::NextWorkspace),
         Key::Named(key::Named::F5) if !ctrl && !shift => Some(Command::RefreshMetadata),
+        _ if ctrl
+            && shift
+            && key.to_latin(physical).map(|c| c.to_ascii_lowercase()) == Some('s') =>
+        {
+            Some(Command::SaveDirect)
+        }
         _ if ctrl && !shift => match key.to_latin(physical) {
             Some('s') => Some(Command::Save),
             Some('p') => Some(Command::QuickOpen),

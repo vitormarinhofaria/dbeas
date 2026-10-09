@@ -3,6 +3,7 @@
 pub mod app;
 pub mod commands;
 pub mod connection;
+pub mod data_edit;
 pub mod data_grid;
 pub mod file_explorer;
 pub mod fsutil;

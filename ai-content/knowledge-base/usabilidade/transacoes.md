@@ -1,6 +1,6 @@
 # Transações em workspaces com `requireTransaction`
 
-**Status:** decisões registradas, ainda não implementadas.
+**Status:** implementado na rodada 3 (2026-10-09).
 **Referência:** spec §6.4. Decisão do usuário em 2026-10-09.
 
 ## Regra
@@ -74,6 +74,17 @@ tabela cobre só tabelas de usuário; sequências consumidas não voltam com ROL
   PostgreSQL rejeita os comandos seguintes até o ROLLBACK) e oferecer apenas
   **Cancelar (ROLLBACK)**.
 
-## Ainda em aberto
+## Implementação
 
-Nada no momento.
+- Estado (`TxState`: Idle/Active/Failed) mantido pelo ator em `connection.rs` e
+  publicado num `tokio::sync::watch`; o app o espelha após cada resposta
+  (`Workspace::sync_tx`).
+- O estado é derivado das instruções executadas: `classify::transaction_control`
+  reconhece BEGIN/START, COMMIT/END, ROLLBACK/ABORT, ROLLBACK TO, SAVEPOINT,
+  PREPARE TRANSACTION. Erro com transação ativa → Failed.
+- A política é avaliada por instrução no ator (`check_policy`), com o estado do
+  momento, pois um arquivo pode abrir ou fechar a transação no meio do script.
+- Resumo: `pg_stat_xact_user_tables` + registro de escritas do ator + registro de
+  alterações da grade mantido no app (`Workspace::grid_log`).
+- Limitação: COMMIT/ROLLBACK executados dentro de procedures ou blocos `DO` não são
+  detectados.

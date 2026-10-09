@@ -43,6 +43,8 @@ impl RelationKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColumnMeta {
+    /// Número da coluna na tabela (`attnum`).
+    pub number: i16,
     pub name: String,
     pub type_name: String,
     pub nullable: bool,
@@ -51,6 +53,7 @@ pub struct ColumnMeta {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Relation {
+    pub oid: u32,
     pub schema: String,
     pub name: String,
     pub kind: RelationKind,
@@ -75,6 +78,10 @@ impl Catalog {
         self.schemas.iter().flat_map(|s| s.relations.iter())
     }
 
+    pub fn by_oid(&self, oid: u32) -> Option<&Relation> {
+        self.relations().find(|r| r.oid == oid)
+    }
+
     pub fn find(&self, schema: &str, name: &str) -> Option<&Relation> {
         self.schemas
             .iter()
@@ -93,7 +100,7 @@ const SCHEMAS_SQL: &str = "
     ORDER BY n.nspname";
 
 const RELATIONS_SQL: &str = "
-    SELECT n.nspname::text, c.relname::text, c.relkind::text
+    SELECT n.nspname::text, c.relname::text, c.relkind::text, c.oid
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
@@ -108,7 +115,7 @@ const RELATIONS_SQL: &str = "
 const COLUMNS_SQL: &str = "
     SELECT n.nspname::text, c.relname::text, a.attname::text,
            format_type(a.atttypid, a.atttypmod)::text, NOT a.attnotnull,
-           COALESCE(i.indisprimary, false)
+           COALESCE(i.indisprimary, false), a.attnum
     FROM pg_attribute a
     JOIN pg_class c ON c.oid = a.attrelid
     JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -166,6 +173,7 @@ pub async fn load(client: &Client) -> Result<Catalog, String> {
         schemas[i].relations.push(Relation {
             schema,
             name: row.get(1),
+            oid: row.get(3),
             kind,
             columns: Vec::new(),
         });
@@ -183,6 +191,7 @@ pub async fn load(client: &Client) -> Result<Catalog, String> {
                 type_name: row.get(3),
                 nullable: row.get(4),
                 primary_key: row.get(5),
+                number: row.get(6),
             });
         }
     }
@@ -365,17 +374,20 @@ mod tests {
     #[test]
     fn select_lists_columns() {
         let rel = Relation {
+            oid: 1,
             schema: "public".into(),
             name: "Pedidos".into(),
             kind: RelationKind::Table,
             columns: vec![
                 ColumnMeta {
+                    number: 1,
                     name: "id".into(),
                     type_name: "int4".into(),
                     nullable: false,
                     primary_key: true,
                 },
                 ColumnMeta {
+                    number: 2,
                     name: "user".into(),
                     type_name: "text".into(),
                     nullable: true,
