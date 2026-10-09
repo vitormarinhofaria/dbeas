@@ -1,3 +1,3 @@
-fn main() {
-    println!("Hello, world!");
+fn main() -> iced::Result {
+    dbeas::app::run()
 }

@@ -79,7 +79,7 @@ obrigatórios e não possuem valores padrão. Em caso de colisão de `name` entr
 
   | Campo | Tipo | Obrigatório | Comportamento |
 | --- | --- | --- | --- |
-| `name` | string | Não | Nome exibível do workspace. |
+| `name` | string | **Sim** | Nome exibível do workspace. Valor vazio ou ausente torna a entrada inválida. |
 | `env_file` | string | Não | Caminho para arquivo `.env`; caminho relativo é resolvido a partir do diretório do `dbeas.json`. |
 | `env` | objeto string → string | Não | Variáveis adicionais ou sobrescritas usadas na resolução de configuração. |
 | `dbHost` | string | Não | Host PostgreSQL. Se ausente ou vazio, usar `localhost`. Aceita `${env.NOME}`. |

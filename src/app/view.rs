@@ -1,0 +1,974 @@
+//! Renderização da janela principal.
+
+use iced::widget::{
+    Column, Space, button, center, column, container, mouse_area, opaque, row, rule, scrollable,
+    space, stack, text, text_input, tooltip,
+};
+use iced::{Alignment, Color, Element, Font, Length, Theme, mouse};
+
+use super::quick_open::{QuickOpen, Target};
+use super::state::{Tab, Workspace};
+use super::{App, CloseChoice, DragTarget, Message, Modal};
+use crate::commands::{Command, SHORTCUTS};
+use crate::connection::Status;
+use crate::data_grid::{self, GridView};
+use crate::metadata::RelationKind;
+use crate::session::{ExplorerMode, TabKind};
+use crate::sql_editor::{self, EditorView};
+
+/// Deslocamento horizontal da barra lateral em relação à janela.
+pub const WORKSPACE_STRIP_WIDTH: f32 = 0.0;
+/// Altura aproximada de cabeçalho, abas, barra de ferramentas e status, usada
+/// para converter o arraste do divisor em proporção.
+pub const CHROME_HEIGHT: f32 = 170.0;
+
+const BOLD: Font = Font {
+    weight: iced::font::Weight::Bold,
+    ..Font::DEFAULT
+};
+
+impl App {
+    pub fn view(&self) -> Element<'_, Message> {
+        let sidebar = container(self.sidebar())
+            .width(self.sidebar_width)
+            .height(Length::Fill)
+            .style(panel);
+        let divider = mouse_area(
+            container(Space::new())
+                .width(5)
+                .height(Length::Fill)
+                .style(divider_style),
+        )
+        .on_press(Message::DragStart(DragTarget::Sidebar))
+        .interaction(mouse::Interaction::ResizingHorizontally);
+
+        let main = column![
+            self.header(),
+            self.tab_bar(),
+            self.tab_content(),
+            self.status_bar()
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        let base: Element<'_, Message> = row![sidebar, divider, main].into();
+
+        let overlay = if let Some(q) = &self.quick_open {
+            Some(quick_open_view(q))
+        } else {
+            self.modal.as_ref().map(|m| self.modal_view(m))
+        };
+
+        match overlay {
+            Some(content) => stack![
+                base,
+                opaque(
+                    mouse_area(center(opaque(content)).style(|_| {
+                        container::Style {
+                            background: Some(
+                                Color {
+                                    a: 0.55,
+                                    ..Color::BLACK
+                                }
+                                .into(),
+                            ),
+                            ..container::Style::default()
+                        }
+                    }))
+                    .on_press(Message::CloseModal)
+                )
+            ]
+            .into(),
+            None => base,
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Barra lateral
+
+    fn sidebar(&self) -> Element<'_, Message> {
+        let mut list = Column::new().spacing(2);
+        for (i, ws) in self.workspaces.iter().enumerate() {
+            list = list.push(workspace_item(i, ws, self.active == Some(i)));
+        }
+        if self.workspaces.is_empty() {
+            list = list.push(text("Nenhum workspace registrado.").size(13).style(muted));
+        }
+
+        let workspaces = column![
+            row![
+                text("WORKSPACES").size(11).font(BOLD).style(muted),
+                space::horizontal(),
+                button(text("+").size(14))
+                    .on_press(Message::OpenAddWorkspace)
+                    .padding([0, 8])
+                    .style(button::text),
+            ]
+            .align_y(Alignment::Center),
+            scrollable(list).height(Length::Shrink),
+        ]
+        .spacing(4);
+
+        let explorer: Element<'_, Message> = match self.active_ws() {
+            Some(ws) => explorer(ws),
+            None => text("").into(),
+        };
+
+        column![
+            container(workspaces).max_height(320).padding(8),
+            rule::horizontal(1),
+            container(explorer).padding(8).height(Length::Fill),
+        ]
+        .into()
+    }
+
+    // ------------------------------------------------------------------
+    // Cabeçalho do workspace ativo
+
+    fn header(&self) -> Element<'_, Message> {
+        let Some(ws) = self.active_ws() else {
+            return container(
+                text("Adicione um arquivo dbeas.json pelo botão + da barra lateral.").size(14),
+            )
+            .padding(12)
+            .into();
+        };
+        let index = self.active.unwrap_or(0);
+
+        let mut info = row![
+            status_dot(ws.status),
+            text(&ws.desc.display_name).size(20).font(BOLD)
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+
+        match &ws.desc.config {
+            Ok(c) => {
+                info = info.push(
+                    text(format!("{}@{}:{}/{}", c.user, c.host, c.port, c.db_name))
+                        .size(13)
+                        .style(muted),
+                );
+                if c.read_only {
+                    info = info.push(badge(
+                        "somente leitura",
+                        "Proteção da ferramenta: bloqueia comandos de escrita e abre a sessão com \
+                         default_transaction_read_only. Não substitui permissões no PostgreSQL.",
+                    ));
+                }
+                if c.require_transaction {
+                    info = info.push(badge(
+                        "transação obrigatória",
+                        "Alterações de dados pela grade exigirão COMMIT/ROLLBACK explícitos (próxima etapa).",
+                    ));
+                }
+            }
+            Err(_) => info = info.push(text("configuração inválida").size(13).style(danger_text)),
+        }
+
+        let action: Element<'_, Message> = match ws.status {
+            Status::Connected => button(text("Desconectar").size(13))
+                .on_press(Message::Disconnect(index))
+                .style(button::secondary)
+                .into(),
+            Status::Connecting => text("conectando…").size(13).into(),
+            _ if ws.desc.config.is_ok() => button(text("Conectar").size(13))
+                .on_press(Message::Connect(index))
+                .into(),
+            _ => Space::new().into(),
+        };
+
+        let mut col =
+            column![row![info, space::horizontal(), action].align_y(Alignment::Center)].spacing(4);
+        if let Some(error) = ws.connection_error.as_ref() {
+            col = col.push(text(error).size(13).style(danger_text));
+        } else if let Err(error) = &ws.desc.config {
+            col = col.push(
+                text(format!("{error} ({})", ws.desc.file.display()))
+                    .size(13)
+                    .style(danger_text),
+            );
+        }
+        container(col).padding([8, 12]).width(Length::Fill).into()
+    }
+
+    // ------------------------------------------------------------------
+    // Abas
+
+    fn tab_bar(&self) -> Element<'_, Message> {
+        let Some(ws) = self.active_ws() else {
+            return Space::new().into();
+        };
+        let mut tabs = row![].spacing(2);
+        for (i, tab) in ws.tabs.iter().enumerate() {
+            let active = i == ws.active_tab;
+            let mut label = tab.title();
+            if tab.dirty {
+                label.push_str(" ●");
+            }
+            let icon = match tab.kind {
+                TabKind::Scratch => "✎",
+                TabKind::Table { .. } => "▦",
+                TabKind::File { .. } => "▤",
+            };
+            let mut content = row![text(icon).size(12), text(label).size(13)]
+                .spacing(6)
+                .align_y(Alignment::Center);
+            if !tab.is_scratch() {
+                content = content.push(
+                    button(text("×").size(13))
+                        .on_press(Message::CloseTab(i))
+                        .padding([0, 4])
+                        .style(button::text),
+                );
+            }
+            tabs = tabs.push(
+                button(content)
+                    .on_press(Message::SelectTab(i))
+                    .padding([4, 10])
+                    .style(move |theme: &Theme, status| tab_style(theme, status, active)),
+            );
+        }
+        container(
+            scrollable(tabs).direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::new().width(4).scroller_width(4),
+            )),
+        )
+        .padding([0, 8])
+        .width(Length::Fill)
+        .into()
+    }
+
+    fn tab_content(&self) -> Element<'_, Message> {
+        let Some(ws) = self.active_ws() else {
+            return center(text("")).into();
+        };
+        let tab = &ws.tabs[ws.active_tab];
+
+        let top = (tab.split * 1000.0) as u16;
+        let bottom = 1000 - top;
+
+        let results = container(results_panel(ws, tab))
+            .height(Length::FillPortion(top))
+            .width(Length::Fill);
+        let divider = mouse_area(
+            container(Space::new())
+                .height(6)
+                .width(Length::Fill)
+                .style(divider_style),
+        )
+        .on_press(Message::DragStart(DragTarget::Split))
+        .interaction(mouse::Interaction::ResizingVertically);
+
+        let editor: Element<'_, Message> = if tab.loading_file {
+            center(text("Carregando arquivo…")).into()
+        } else {
+            sql_editor::view(EditorView {
+                content: &tab.editor,
+                scroll_id: tab.editor_scroll_id.clone(),
+                error_line: tab.run.error.as_ref().and_then(|e| e.line),
+                on_action: Message::Editor,
+                on_command: Message::Command,
+                on_scroll: Message::EditorScrolled,
+                min_height: ((self.window_height - CHROME_HEIGHT) * (1.0 - tab.split) - 4.0).max(120.0),
+                read_only_hint: ws.read_only().then_some(
+                    "Workspace somente leitura: só consultas de leitura são executadas. Ctrl+Enter executa.",
+                ),
+            })
+        };
+        let editor = container(editor)
+            .height(Length::FillPortion(bottom))
+            .width(Length::Fill);
+
+        column![results, divider, editor]
+            .height(Length::Fill)
+            .into()
+    }
+
+    fn status_bar(&self) -> Element<'_, Message> {
+        let mut bar = row![].spacing(12).align_y(Alignment::Center);
+        if let Some(notice) = &self.notice {
+            let style = if notice.is_error {
+                danger_text
+            } else {
+                text::default
+            };
+            bar = bar.push(text(&notice.text).size(13).style(style));
+            bar = bar.push(
+                button(text("×").size(13))
+                    .on_press(Message::DismissNotice)
+                    .padding([0, 4])
+                    .style(button::text),
+            );
+        }
+        bar = bar.push(space::horizontal());
+        if let Some(ws) = self.active_ws() {
+            if let Some(path) = ws.tabs[ws.active_tab].file_path() {
+                bar = bar.push(text(path.display().to_string()).size(12).style(muted));
+            }
+            let lsp = tooltip(
+                text("autocomplete/diagnóstico LSP: indisponível").size(12).style(muted),
+                container(text("O servidor LSP SQL ainda não foi integrado. Erros do PostgreSQL são mostrados com linha e coluna após a execução.").size(12))
+                    .padding(6)
+                    .style(container::rounded_box),
+                tooltip::Position::Top,
+            );
+            bar = bar.push(lsp);
+        }
+        bar = bar.push(
+            button(text("Atalhos").size(12))
+                .on_press(Message::ShowShortcuts)
+                .padding([2, 8])
+                .style(button::text),
+        );
+        container(bar)
+            .padding([4, 12])
+            .width(Length::Fill)
+            .style(panel)
+            .into()
+    }
+
+    // ------------------------------------------------------------------
+    // Modais
+
+    fn modal_view<'a>(&'a self, modal: &'a Modal) -> Element<'a, Message> {
+        let body: Element<'a, Message> = match modal {
+            Modal::AddWorkspace { path, error } => {
+                let mut col = column![
+                    text("Adicionar workspace").size(18).font(BOLD),
+                    text("Caminho do arquivo dbeas.json. O arquivo é registrado uma única vez em ~/.config/dbeas/config.").size(13).style(muted),
+                    row![
+                        text_input("/caminho/do/projeto/dbeas.json", path)
+                            .on_input(Message::AddPathChanged)
+                            .on_submit(Message::SubmitAddWorkspace)
+                            .width(Length::Fill),
+                        button(text("Procurar…")).on_press(Message::BrowseWorkspaceFile).style(button::secondary),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(10);
+                if let Some(e) = error {
+                    col = col.push(text(e).size(13).style(danger_text));
+                }
+                col.push(
+                    row![
+                        space::horizontal(),
+                        button(text("Cancelar"))
+                            .on_press(Message::CloseModal)
+                            .style(button::secondary),
+                        button(text("Adicionar")).on_press(Message::SubmitAddWorkspace),
+                    ]
+                    .spacing(8),
+                )
+                .into()
+            }
+            Modal::RemoveWorkspace { file, names } => column![
+                text("Remover workspace").size(18).font(BOLD),
+                text(format!(
+                    "O registro do arquivo {} será removido da lista.",
+                    file.display()
+                ))
+                .size(13),
+                text(format!("Workspaces afetados: {}", names.join(", "))).size(13),
+                text("Nenhum arquivo do projeto será apagado.")
+                    .size(13)
+                    .style(muted),
+                row![
+                    space::horizontal(),
+                    button(text("Cancelar"))
+                        .on_press(Message::CloseModal)
+                        .style(button::secondary),
+                    button(text("Remover"))
+                        .on_press(Message::ConfirmRemoveWorkspace)
+                        .style(button::danger),
+                ]
+                .spacing(8),
+            ]
+            .spacing(10)
+            .into(),
+            Modal::CloseTab { title, .. } => column![
+                text("Alterações não salvas").size(18).font(BOLD),
+                text(format!("{title} tem alterações não salvas.")).size(13),
+                row![
+                    space::horizontal(),
+                    button(text("Cancelar"))
+                        .on_press(Message::CloseModal)
+                        .style(button::secondary),
+                    button(text("Descartar"))
+                        .on_press(Message::ConfirmCloseTab(CloseChoice::Discard))
+                        .style(button::danger),
+                    button(text("Salvar")).on_press(Message::ConfirmCloseTab(CloseChoice::Save)),
+                ]
+                .spacing(8),
+            ]
+            .spacing(10)
+            .into(),
+            Modal::Shortcuts => {
+                let mut col = column![text("Atalhos").size(18).font(BOLD)].spacing(6);
+                for s in SHORTCUTS {
+                    col = col.push(row![
+                        text(s.keys).font(Font::MONOSPACE).size(13).width(170),
+                        text(s.description).size(13)
+                    ]);
+                }
+                col.push(text("Atalhos da aplicação têm prioridade sobre o editor quando ele está focado.").size(12).style(muted))
+                    .push(row![space::horizontal(), button(text("Fechar")).on_press(Message::CloseModal)])
+                    .into()
+            }
+        };
+        container(body)
+            .padding(20)
+            .width(560)
+            .style(container::rounded_box)
+            .into()
+    }
+}
+
+// ----------------------------------------------------------------------
+// Componentes
+
+fn workspace_item(index: usize, ws: &Workspace, active: bool) -> Element<'_, Message> {
+    let status = ws.status;
+    let label = column![
+        text(&ws.desc.display_name)
+            .size(14)
+            .font(if active { BOLD } else { Font::DEFAULT }),
+        text(if ws.desc.config.is_err() {
+            "erro de configuração"
+        } else {
+            status.label()
+        })
+        .size(11)
+        .style(muted),
+    ];
+    let content = row![status_dot(status), label, space::horizontal()]
+        .spacing(8)
+        .align_y(Alignment::Center);
+    let item = button(content)
+        .on_press(Message::SelectWorkspace(index))
+        .width(Length::Fill)
+        .padding([4, 8])
+        .style(move |theme: &Theme, s| tab_style(theme, s, active));
+
+    let remove = button(text("−").size(13))
+        .on_press(Message::AskRemoveWorkspace(index))
+        .padding([0, 6])
+        .style(button::text);
+    let tip = match &ws.desc.config {
+        Err(e) => format!("{}: {e}", ws.desc.file.display()),
+        Ok(_) => format!("{} — {}", status.label(), ws.desc.file.display()),
+    };
+    tooltip(
+        row![item, remove].align_y(Alignment::Center),
+        container(text(tip).size(12))
+            .padding(6)
+            .style(container::rounded_box),
+        tooltip::Position::Right,
+    )
+    .into()
+}
+
+fn status_dot<'a>(status: Status) -> Element<'a, Message> {
+    let (symbol, color) = match status {
+        Status::Disconnected => ("○", Color::from_rgb(0.55, 0.55, 0.6)),
+        Status::Connecting => ("◐", Color::from_rgb(0.95, 0.8, 0.3)),
+        Status::Connected => ("●", Color::from_rgb(0.4, 0.85, 0.5)),
+        Status::Error => ("✕", Color::from_rgb(0.95, 0.4, 0.4)),
+    };
+    text(symbol).size(14).color(color).into()
+}
+
+fn badge<'a>(label: &'a str, explanation: &'a str) -> Element<'a, Message> {
+    tooltip(
+        container(text(label).size(11))
+            .padding([2, 6])
+            .style(|theme: &Theme| {
+                let p = theme.extended_palette();
+                container::Style {
+                    background: Some(p.secondary.weak.color.into()),
+                    text_color: Some(p.secondary.weak.text),
+                    border: iced::Border {
+                        radius: 4.0.into(),
+                        ..iced::Border::default()
+                    },
+                    ..container::Style::default()
+                }
+            }),
+        container(text(explanation).size(12))
+            .padding(6)
+            .max_width(360)
+            .style(container::rounded_box),
+        tooltip::Position::Bottom,
+    )
+    .into()
+}
+
+fn explorer(ws: &Workspace) -> Element<'_, Message> {
+    let mode_button = |label: &'static str, mode: ExplorerMode| {
+        let active = ws.explorer == mode;
+        button(text(label).size(12))
+            .on_press(Message::SetExplorer(mode))
+            .padding([3, 8])
+            .style(move |theme: &Theme, s| tab_style(theme, s, active))
+    };
+    let modes = row![
+        mode_button("Tabelas", ExplorerMode::Tables),
+        mode_button("Objetos", ExplorerMode::Objects),
+        mode_button("Arquivos", ExplorerMode::Files),
+    ]
+    .spacing(4);
+
+    let content: Element<'_, Message> = match ws.explorer {
+        ExplorerMode::Tables => tables_explorer(ws),
+        ExplorerMode::Objects => objects_explorer(ws),
+        ExplorerMode::Files => files_explorer(ws),
+    };
+    column![modes, content].spacing(8).into()
+}
+
+fn catalog_placeholder(ws: &Workspace) -> Option<Element<'_, Message>> {
+    if ws.catalog.is_some() {
+        return None;
+    }
+    let msg = if let Some(e) = &ws.catalog_error {
+        e.clone()
+    } else if ws.catalog_loading {
+        "Carregando metadados…".into()
+    } else {
+        match ws.status {
+            Status::Connected => "Metadados não carregados (F5 atualiza).".into(),
+            Status::Connecting => "Conectando…".into(),
+            _ => "Conecte o workspace para listar objetos.".into(),
+        }
+    };
+    Some(text(msg).size(13).style(muted).into())
+}
+
+fn tables_explorer(ws: &Workspace) -> Element<'_, Message> {
+    let filter = text_input("Filtrar tabelas e views", &ws.filter)
+        .on_input(Message::FilterChanged)
+        .size(13);
+    if let Some(p) = catalog_placeholder(ws) {
+        return column![filter, p].spacing(6).into();
+    }
+    let needle = ws.filter.to_lowercase();
+    let mut list = Column::new().spacing(1);
+    let mut count = 0;
+    for r in ws.catalog.iter().flat_map(|c| c.relations()) {
+        let full = format!("{}.{}", r.schema, r.name);
+        if !needle.is_empty() && !full.to_lowercase().contains(&needle) {
+            continue;
+        }
+        count += 1;
+        let label = if r.schema == "public" {
+            r.name.clone()
+        } else {
+            full
+        };
+        list = list.push(object_button(
+            relation_icon(r.kind),
+            label,
+            Some(Message::OpenRelation {
+                schema: r.schema.clone(),
+                name: r.name.clone(),
+            }),
+        ));
+    }
+    if count == 0 {
+        list = list.push(text("Nenhuma tabela ou view.").size(13).style(muted));
+    }
+    column![filter, scrollable(list).height(Length::Fill)]
+        .spacing(6)
+        .into()
+}
+
+fn objects_explorer(ws: &Workspace) -> Element<'_, Message> {
+    if let Some(p) = catalog_placeholder(ws) {
+        return p;
+    }
+    let mut tree = Column::new().spacing(1);
+    for schema in ws.catalog.iter().flat_map(|c| c.schemas.iter()) {
+        let key = format!("s:{}", schema.name);
+        let open = ws.expanded.contains(&key);
+        tree = tree.push(tree_toggle(
+            0,
+            open,
+            format!("{} (schema)", schema.name),
+            key.clone(),
+        ));
+        if !open {
+            continue;
+        }
+        let groups: [(&str, Vec<(String, Option<Message>)>); 5] = [
+            (
+                "Tabelas",
+                relations_of(schema, |k| !k.is_view() && k != RelationKind::ForeignTable),
+            ),
+            ("Views", relations_of(schema, |k| k == RelationKind::View)),
+            (
+                "Views materializadas",
+                relations_of(schema, |k| k == RelationKind::MaterializedView),
+            ),
+            (
+                "Funções",
+                schema.functions.iter().map(|f| (f.clone(), None)).collect(),
+            ),
+            (
+                "Sequências",
+                schema.sequences.iter().map(|s| (s.clone(), None)).collect(),
+            ),
+        ];
+        for (label, items) in groups {
+            if items.is_empty() {
+                continue;
+            }
+            let gkey = format!("{key}/{label}");
+            let gopen = ws.expanded.contains(&gkey);
+            tree = tree.push(tree_toggle(
+                1,
+                gopen,
+                format!("{label} ({})", items.len()),
+                gkey,
+            ));
+            if gopen {
+                for (name, action) in items {
+                    tree = tree.push(row![
+                        Space::new().width(28),
+                        object_button("", name, action)
+                    ]);
+                }
+            }
+        }
+    }
+    scrollable(tree).height(Length::Fill).into()
+}
+
+fn relations_of(
+    schema: &crate::metadata::Schema,
+    filter: impl Fn(RelationKind) -> bool,
+) -> Vec<(String, Option<Message>)> {
+    schema
+        .relations
+        .iter()
+        .filter(|r| filter(r.kind))
+        .map(|r| {
+            (
+                r.name.clone(),
+                Some(Message::OpenRelation {
+                    schema: r.schema.clone(),
+                    name: r.name.clone(),
+                }),
+            )
+        })
+        .collect()
+}
+
+fn tree_toggle<'a>(depth: u16, open: bool, label: String, key: String) -> Element<'a, Message> {
+    row![
+        Space::new().width(f32::from(depth) * 14.0),
+        button(
+            row![
+                text(if open { "▾" } else { "▸" }).size(12),
+                text(label).size(13)
+            ]
+            .spacing(6)
+        )
+        .on_press(Message::ToggleExpanded(key))
+        .padding([2, 4])
+        .width(Length::Fill)
+        .style(button::text),
+    ]
+    .into()
+}
+
+fn files_explorer(ws: &Workspace) -> Element<'_, Message> {
+    let root = ws
+        .desc
+        .config
+        .as_ref()
+        .ok()
+        .and_then(|c| c.sql_files_dir.clone());
+    let Some(root) = root else {
+        return text("Nenhum diretório configurado (sqlFilesDir).")
+            .size(13)
+            .style(muted)
+            .into();
+    };
+    let entries = match &ws.files.entries {
+        None => return text("Carregando…").size(13).style(muted).into(),
+        Some(Err(e)) => return text(e).size(13).style(danger_text).into(),
+        Some(Ok(entries)) => entries,
+    };
+
+    let current = ws.files.current_dir.clone().unwrap_or_else(|| root.clone());
+    let canonical_root = std::fs::canonicalize(&root).unwrap_or(root.clone());
+    let canonical_current = std::fs::canonicalize(&current).unwrap_or(current.clone());
+    let relative = canonical_current
+        .strip_prefix(&canonical_root)
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+
+    let mut list = Column::new().spacing(1);
+    list = list.push(
+        text(format!("/{relative}"))
+            .size(12)
+            .font(Font::MONOSPACE)
+            .style(muted),
+    );
+    if canonical_current != canonical_root {
+        if let Some(parent) = canonical_current.parent() {
+            list = list.push(object_button(
+                "↰",
+                "..".into(),
+                Some(Message::NavigateDir(parent.to_path_buf())),
+            ));
+        }
+    }
+    for e in entries {
+        let (icon, msg) = if e.is_dir {
+            ("▸", Message::NavigateDir(e.path.clone()))
+        } else {
+            ("▤", Message::OpenFile(e.path.clone()))
+        };
+        list = list.push(object_button(icon, e.name.clone(), Some(msg)));
+    }
+    if entries.is_empty() {
+        list = list.push(text("Nenhum arquivo .sql aqui.").size(13).style(muted));
+    }
+    scrollable(list).height(Length::Fill).into()
+}
+
+fn object_button<'a>(
+    icon: &'a str,
+    label: String,
+    action: Option<Message>,
+) -> Element<'a, Message> {
+    button(row![text(icon).size(12).width(14), text(label).size(13)].spacing(6))
+        .on_press_maybe(action)
+        .padding([2, 4])
+        .width(Length::Fill)
+        .style(button::text)
+        .into()
+}
+
+fn relation_icon(kind: RelationKind) -> &'static str {
+    match kind {
+        RelationKind::View | RelationKind::MaterializedView => "◇",
+        _ => "▦",
+    }
+}
+
+fn results_panel<'a>(ws: &'a Workspace, tab: &'a Tab) -> Element<'a, Message> {
+    let run = &tab.run;
+    let can_run = ws.connection.is_some() && !run.running;
+
+    let mut toolbar = row![
+        button(text("▶ Executar").size(13))
+            .on_press_maybe(can_run.then_some(Message::Command(Command::ExecuteCurrent)))
+            .padding([3, 10]),
+        button(text("Script").size(13))
+            .on_press_maybe(can_run.then_some(Message::Command(Command::ExecuteScript)))
+            .padding([3, 10])
+            .style(button::secondary),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
+    if run.running {
+        toolbar = toolbar.push(text("executando…").size(13)).push(
+            button(text("Cancelar").size(13))
+                .on_press(Message::Command(Command::CancelQuery))
+                .padding([3, 10])
+                .style(button::danger),
+        );
+    }
+    if let Some(result) = &run.result {
+        let mut summary = format!("{} linha(s)", result.rows.len());
+        if result.has_more {
+            summary.push_str(" (há mais)");
+        }
+        if result.truncated {
+            summary.push_str(&format!(
+                " — limite de {} linhas em memória atingido",
+                crate::query::MAX_ROWS
+            ));
+        }
+        toolbar = toolbar.push(text(summary).size(13).style(muted));
+        if result.has_more && run.cursor.is_some() {
+            toolbar = toolbar.push(
+                button(
+                    text(if run.fetching {
+                        "carregando…"
+                    } else {
+                        "Carregar mais"
+                    })
+                    .size(12),
+                )
+                .on_press_maybe((!run.fetching).then_some(Message::FetchMore))
+                .padding([2, 8])
+                .style(button::secondary),
+            );
+        }
+    }
+    if let Some(ms) = run.elapsed_ms {
+        toolbar = toolbar.push(text(format!("{ms} ms")).size(12).style(muted));
+    }
+    if let Some(last) = run.messages.last() {
+        toolbar = toolbar
+            .push(space::horizontal())
+            .push(text(last).size(12).style(muted));
+    }
+
+    let mut col = column![container(toolbar).padding([4, 8])].spacing(0);
+
+    if let Some(error) = &run.error {
+        let position = error
+            .position
+            .map(|(l, c)| format!("Linha {l}, coluna {c}: "))
+            .unwrap_or_default();
+        col = col.push(
+            container(
+                text(format!("{position}{}", error.text))
+                    .size(13)
+                    .font(Font::MONOSPACE),
+            )
+            .padding(8)
+            .width(Length::Fill)
+            .style(|theme: &Theme| {
+                let p = theme.extended_palette();
+                container::Style {
+                    background: Some(
+                        Color {
+                            a: 0.18,
+                            ..p.danger.base.color
+                        }
+                        .into(),
+                    ),
+                    text_color: Some(p.danger.strong.color),
+                    ..container::Style::default()
+                }
+            }),
+        );
+    }
+
+    let grid: Element<'a, Message> = match &run.result {
+        Some(result) if !result.columns.is_empty() => data_grid::view(GridView {
+            result,
+            widths: &tab.widths,
+            scroll: &tab.grid_scroll,
+            header_id: tab.grid_header_id.clone(),
+            body_id: tab.grid_body_id.clone(),
+            selected: tab.selected,
+            on_scroll: Message::GridScrolled,
+            on_select: Message::SelectCell,
+        }),
+        _ => center(
+            text(if ws.connection.is_none() {
+                "Sem conexão."
+            } else {
+                "Execute uma consulta (Ctrl+Enter) para ver resultados."
+            })
+            .size(13)
+            .style(muted),
+        )
+        .into(),
+    };
+    col.push(grid).height(Length::Fill).into()
+}
+
+fn quick_open_view(q: &QuickOpen) -> Element<'_, Message> {
+    let input = text_input("Buscar tabelas, views e arquivos SQL…", &q.query)
+        .id(q.input_id.clone())
+        .on_input(Message::QuickOpenQuery)
+        .on_submit(Message::QuickOpenSubmit)
+        .size(15);
+    let mut list = Column::new().spacing(1);
+    for (pos, &i) in q.matches.iter().enumerate() {
+        let item = &q.items[i];
+        let selected = pos == q.selected;
+        let icon = match item.target {
+            Target::Relation { kind, .. } => relation_icon(kind),
+            Target::File(_) => "▤",
+        };
+        list = list.push(
+            button(
+                row![
+                    text(icon).size(12).width(14),
+                    text(&item.label).size(14),
+                    space::horizontal(),
+                    text(&item.detail).size(12).style(muted)
+                ]
+                .spacing(8),
+            )
+            .on_press(Message::QuickOpenPick(pos))
+            .width(Length::Fill)
+            .padding([3, 8])
+            .style(move |theme: &Theme, s| tab_style(theme, s, selected)),
+        );
+    }
+    if q.matches.is_empty() {
+        list = list.push(text("Nada encontrado.").size(13).style(muted));
+    }
+    container(column![input, scrollable(list).height(Length::Shrink)].spacing(8))
+        .padding(12)
+        .width(640)
+        .max_height(480)
+        .style(container::rounded_box)
+        .into()
+}
+
+// ----------------------------------------------------------------------
+// Estilos
+
+fn muted(theme: &Theme) -> text::Style {
+    let p = theme.extended_palette();
+    text::Style {
+        color: Some(Color {
+            a: 0.6,
+            ..p.background.base.text
+        }),
+    }
+}
+
+fn danger_text(theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(theme.extended_palette().danger.strong.color),
+    }
+}
+
+fn panel(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(p.background.weakest.color.into()),
+        ..container::Style::default()
+    }
+}
+
+fn divider_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(p.background.weak.color.into()),
+        ..container::Style::default()
+    }
+}
+
+fn tab_style(theme: &Theme, status: button::Status, active: bool) -> button::Style {
+    let p = theme.extended_palette();
+    let background = match (active, status) {
+        (true, _) => p.primary.weak.color,
+        (false, button::Status::Hovered) => p.background.weak.color,
+        _ => Color::TRANSPARENT,
+    };
+    button::Style {
+        background: Some(background.into()),
+        text_color: if active {
+            p.primary.weak.text
+        } else {
+            p.background.base.text
+        },
+        border: iced::Border {
+            radius: 4.0.into(),
+            ..iced::Border::default()
+        },
+        ..button::Style::default()
+    }
+}

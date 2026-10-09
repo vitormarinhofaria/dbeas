@@ -20,7 +20,15 @@ decidido.
 - `configuracao/` — `dbeas.json`, configuração global, resolução de variáveis.
 - `design/` — aparência, layout e componentes visuais.
 - `usabilidade/` — comportamento da interface, interação e atalhos.
+- `progresso/` — estado da implementação e próximos passos (continuidade entre sessões).
 
 ## Índice
+
+- [Estado da implementação](progresso/estado-implementacao.md) — **comece por aqui ao retomar**: o que está pronto, como testar, pendências.
+- [Mapa de módulos](arquitetura/modulos.md) — responsabilidade de cada módulo, fluxo assíncrono, identidade de workspace.
+- [Decisões da rodada 1](arquitetura/decisoes-rodada-1.md) — driver, parser, paginação/cursor, readOnly, sessão, editor, grade.
+- [Regras do dbeas.json](configuracao/dbeas-json.md) — validação, interpolação e padrões como implementados.
+- [Atalhos](usabilidade/atalhos.md) — mapa central e conflitos documentados.
+- [Quando SQL é executado](usabilidade/execucao-sql.md) — conexão, abertura de tabela, nada de execução automática de SQL do usuário.
 
 - [Identificação do workspace na barra lateral](usabilidade/identificacao-workspace-sidebar.md) — usar `name` da entrada do `dbeas.json`, não o nome do arquivo.
