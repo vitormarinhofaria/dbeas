@@ -3,6 +3,7 @@
 
 //! DBeas — cliente desktop PostgreSQL em Rust + Iced.
 
+pub mod about;
 pub mod app;
 pub mod commands;
 pub mod completion;

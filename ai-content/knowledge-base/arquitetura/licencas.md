@@ -47,8 +47,13 @@
 - `about.toml` (mesma lista de licenças) + `about.hbs` (modelo HTML).
 - Gerar ao distribuir binários:
   `cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html`
-- O arquivo gerado acompanha o binário; regenerar sempre que o `Cargo.lock` mudar.
-  Ele não é versionado (`.gitignore`), para nunca ficar desatualizado no repositório.
+- O arquivo gerado é **embutido no binário** pelo `build.rs` (a tela "Sobre" o
+  abre, ver [Tela "Sobre"](../usabilidade/tela-sobre.md)). O .deb também o
+  instala em `/usr/share/doc/dbeas/`.
+- **Build de release falha** se o arquivo não existir ou for mais antigo que o
+  `Cargo.lock`. Build de debug embute uma página provisória.
+- Regenerar sempre que o `Cargo.lock` mudar. Ele não é versionado (`.gitignore`),
+  para nunca ficar desatualizado no repositório.
 - Ferramentas: `cargo install --locked cargo-deny` e
   `cargo install --locked cargo-about --features cli` (sem `cli` o binário não é
   instalado).

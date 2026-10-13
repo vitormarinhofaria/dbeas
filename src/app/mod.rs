@@ -210,6 +210,12 @@ pub enum Modal {
         dirty: Vec<String>,
     },
     Shortcuts,
+    /// Versão, copyright e licenças. `license` mostra o texto da GPL;
+    /// `error` é a falha ao abrir algo externo (navegador, avisos de terceiros).
+    About {
+        license: bool,
+        error: Option<String>,
+    },
 }
 
 /// Teste de conexão do editor de configurações.
@@ -402,6 +408,10 @@ pub enum Message {
     QuickOpenSubmit,
     QuickOpenPick(usize),
     ShowShortcuts,
+    ShowAbout,
+    AboutToggleLicense,
+    AboutOpenSource,
+    AboutOpenThirdParty,
     CloseModal,
 
     // Layout
@@ -418,6 +428,13 @@ pub enum Message {
 }
 
 impl App {
+    /// Registra na tela "Sobre" a falha (ou o sucesso) ao abrir algo externo.
+    fn about_open(&mut self, result: Result<(), String>) {
+        if let Some(Modal::About { error, .. }) = &mut self.modal {
+            *error = result.err();
+        }
+    }
+
     fn boot() -> (Self, Task<Message>) {
         let settings_path = settings::default_path();
         let session_path = session::default_path();
@@ -1715,6 +1732,27 @@ impl App {
             }
             Message::ShowShortcuts => {
                 self.modal = Some(Modal::Shortcuts);
+                Task::none()
+            }
+            Message::ShowAbout => {
+                self.modal = Some(Modal::About {
+                    license: false,
+                    error: None,
+                });
+                Task::none()
+            }
+            Message::AboutToggleLicense => {
+                if let Some(Modal::About { license, .. }) = &mut self.modal {
+                    *license = !*license;
+                }
+                Task::none()
+            }
+            Message::AboutOpenSource => {
+                self.about_open(crate::about::open_external(crate::about::SOURCE_URL));
+                Task::none()
+            }
+            Message::AboutOpenThirdParty => {
+                self.about_open(crate::about::open_third_party());
                 Task::none()
             }
             Message::CloseModal => {

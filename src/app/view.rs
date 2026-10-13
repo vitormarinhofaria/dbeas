@@ -14,6 +14,7 @@ use super::right_click::right_click;
 use super::quick_open::{QuickOpen, Target};
 use super::state::{Tab, Workspace};
 use super::{App, CloseChoice, DragTarget, Message, Modal, TabMenu, TabMenuAction};
+use crate::about;
 use crate::commands::{Command, SHORTCUTS};
 use crate::connection::{self, Probe, Status, TxState};
 use crate::data_grid::{self, GridView};
@@ -530,6 +531,12 @@ impl App {
                 .padding([2, 8])
                 .style(button::text),
         );
+        bar = bar.push(
+            button(text("Sobre").size(12))
+                .on_press(Message::ShowAbout)
+                .padding([2, 8])
+                .style(button::text),
+        );
         container(bar)
             .padding([4, 12])
             .width(Length::Fill)
@@ -906,6 +913,9 @@ impl App {
                     .push(row![space::horizontal(), button(text("Fechar")).on_press(Message::CloseModal)])
                     .into()
             }
+            Modal::About { license, error } => {
+                about_view(*license, error.as_deref(), self.window_height)
+            }
         };
         container(body)
             .padding(20)
@@ -918,6 +928,62 @@ impl App {
 
 // ----------------------------------------------------------------------
 // Componentes
+
+/// Tela "Sobre": versão, copyright, aviso da GPL e acesso às licenças.
+fn about_view(license: bool, error: Option<&str>, window_height: f32) -> Element<'static, Message> {
+    let mut col = column![
+        row![
+            text(about::NAME).size(22).font(BOLD),
+            text(format!("versão {}", about::VERSION))
+                .size(13)
+                .style(muted),
+        ]
+        .spacing(10)
+        .align_y(Alignment::End),
+        text(about::DESCRIPTION).size(13),
+        text(about::COPYRIGHT).size(13),
+        text(format!("Licença: {}", about::LICENSE_ID)).size(13),
+    ]
+    .spacing(8);
+
+    col = if license {
+        // Altura fixa: o modal limita a altura total e o texto da GPL é longo.
+        col.push(
+            scrollable(text(about::LICENSE_TEXT).font(Font::MONOSPACE).size(12))
+                .height((window_height - 300.0).max(160.0))
+                .width(Length::Fill),
+        )
+    } else {
+        col.push(text(about::NOTICE).size(12).style(muted))
+            .push(text(format!("Código-fonte: {}", about::SOURCE_URL)).size(13))
+    };
+
+    if let Some(e) = error {
+        col = col.push(text(e.to_string()).size(12).style(text::danger));
+    }
+
+    col.push(
+        row![
+            button(text(if license {
+                "Voltar"
+            } else {
+                "Licença (GPL-3.0)"
+            }))
+            .on_press(Message::AboutToggleLicense)
+            .style(button::secondary),
+            button(text("Licenças de terceiros"))
+                .on_press(Message::AboutOpenThirdParty)
+                .style(button::secondary),
+            button(text("Código-fonte"))
+                .on_press(Message::AboutOpenSource)
+                .style(button::secondary),
+            space::horizontal(),
+            button(text("Fechar")).on_press(Message::CloseModal),
+        ]
+        .spacing(8),
+    )
+    .into()
+}
 
 fn workspace_item(index: usize, ws: &Workspace, active: bool) -> Element<'_, Message> {
     let status = ws.status;

@@ -18,6 +18,7 @@ Segue a §11 da spec. Crate com `lib.rs` (tudo testável) e `main.rs` mínimo.
 | `sql_editor.rs` | Editor com highlight e gutter. |
 | `file_explorer.rs` | Listagem restrita ao `sqlFilesDir`, leitura/gravação, varredura para o `Ctrl+P`. |
 | `commands.rs` | Mapa central de atalhos. |
+| `about.rs` | Versão, copyright, aviso e texto da GPL; localiza os avisos de terceiros e abre arquivos/URLs externos. |
 | `fsutil.rs` | Gravação atômica e normalização de caminhos. |
 
 ## Fluxo assíncrono

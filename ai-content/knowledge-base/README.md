@@ -37,6 +37,7 @@ decidido.
 - [Editor gráfico do dbeas.json](configuracao/editor-grafico.md) — ícone ⚙ na sidebar, uma aba por entrada e "+ nova entrada", testar conexão com resumo, prévias de `${env.X}` (senha só com asteriscos), gravação que preserva o arquivo.
 - [Adicionar ou criar workspace](usabilidade/adicionar-criar-workspace.md) — botão Adicionar vira Criar para diretório sem dbeas.json ou caminho novo; confirma e abre o editor.
 - [Menu de contexto das abas](usabilidade/menu-contexto-abas.md) — clique direito: fechar aba/à esquerda/à direita/tudo; diálogo único para abas sujas.
+- [Tela "Sobre"](usabilidade/tela-sobre.md) — botão na barra de status: versão, copyright, aviso e texto da GPL, licenças de terceiros, código-fonte.
 - [Atalhos](usabilidade/atalhos.md) — mapa central e conflitos documentados.
 - [Transações (requireTransaction)](usabilidade/transacoes.md) — transação manual com botões; grade, SQL manual e arquivos participam; resumo antes do COMMIT.
 - [Edição de dados](usabilidade/edicao-dados.md) — quando um resultado é editável, interação, Ctrl+S/Ctrl+Shift+S, execução parametrizada.
