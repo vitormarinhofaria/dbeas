@@ -45,7 +45,12 @@
 ## Avisos de terceiros — cargo-about
 
 - `about.toml` (mesma lista de licenças) + `about.hbs` (modelo HTML).
-- Gerar ao distribuir binários:
+- **Setup do projeto:** `scripts/setup.sh` (Linux/macOS) ou `scripts\setup.ps1`
+  (Windows) instalam o cargo-about se faltar e geram o arquivo se ausente ou
+  mais antigo que o `Cargo.lock` (`--force`/`-Force` regenera sempre). Rodar
+  uma vez após clonar e a cada mudança do `Cargo.lock`, antes de
+  `cargo run --release`. O `package-deb.sh --local` chama o `setup.sh --force`.
+- Manualmente:
   `cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html`
 - O arquivo gerado é **embutido no binário** pelo `build.rs` (a tela "Sobre" o
   abre, ver [Tela "Sobre"](../usabilidade/tela-sobre.md)). O .deb também o

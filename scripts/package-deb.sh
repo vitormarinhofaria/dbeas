@@ -20,7 +20,7 @@ if [[ "${1:-}" == "--local" ]]; then
     shift
     cd "$ROOT"
     cargo deny check licenses
-    cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
+    "$ROOT/scripts/setup.sh" --force
     cargo deb "$@"
     exit 0
 fi

@@ -21,8 +21,8 @@ fn main() {
     let source = root.join(FILE);
     let release = env::var("PROFILE").as_deref() == Ok("release");
     let generate = format!(
-        "Gere com: cargo about generate about.hbs -o {FILE}\n\
-         (ou use scripts/package-deb.sh, que já faz isso)"
+        "Prepare o projeto com scripts/setup.sh (Linux/macOS) ou scripts\\setup.ps1 (Windows).\n\
+         Manualmente: cargo about generate about.hbs -o {FILE}"
     );
 
     if source.is_file() {
@@ -40,8 +40,8 @@ fn main() {
     fs::write(
         &out,
         "<!doctype html><meta charset=\"utf-8\"><title>Licenças de terceiros</title>\
-         <p>Build de desenvolvimento sem os avisos de terceiros. Gere com \
-         <code>cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html</code> \
+         <p>Build de desenvolvimento sem os avisos de terceiros. Rode \
+         <code>scripts/setup.sh</code> (ou <code>scripts\\setup.ps1</code>) \
          e recompile.</p>",
     )
     .expect("gravar página provisória");
