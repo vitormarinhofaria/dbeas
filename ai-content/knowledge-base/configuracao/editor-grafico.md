@@ -1,15 +1,24 @@
 # Editor gráfico do `dbeas.json`
 
 Pedido do usuário em 2026-10-13. Ainda não está descrito na spec.
-Lógica em `src/workspace/editor.rs` (`Form`, testada); tela em
-`settings_view` (`src/app/view.rs`); fluxo em `App::save_workspace_settings`.
+Lógica em `src/workspace/editor.rs` (`Document` com um `Form` por entrada,
+testada); tela em `settings_view`/`settings_tabs` (`src/app/view.rs`); fluxo em
+`App::save_workspace_settings`.
 
 ## Interação
 
 - Ícone ⚙ ao lado do "−" (remover) em cada workspace da barra lateral abre o
-  editor da entrada correspondente (`Descriptor::entry` = posição no array).
-  Arquivo ilegível ou JSON inválido: não abre; avisa para corrigir num editor
-  de texto.
+  editor do **arquivo inteiro**, com uma aba por entrada do array, já na aba da
+  entrada clicada (`Descriptor::entry` = posição no array). Itens do array que
+  não são objetos não viram abas, mas são preservados. Arquivo ilegível ou JSON
+  inválido: não abre; avisa para corrigir num editor de texto.
+- Abas (pedido do usuário em 2026-10-13): rótulo = `name` digitado (ou
+  "entrada N"/"nova entrada"); `●` = alterada ou nova; `⚠` = erro que impede
+  gravar. "+ nova entrada" cria uma aba vazia, acrescentada ao **fim** do array
+  ao salvar; só abas novas têm "×" (descartar). Remover entradas existentes não
+  é feito pelo editor. Trocar de aba volta a ocultar a senha.
+- Salvar grava todas as abas de uma vez; fica desabilitado se alguma aba tiver
+  erro bloqueante (a mensagem diz qual aba). Arquivo `[]` abre com uma aba nova.
 - Todos os campos são texto, **inclusive `dbPort`**. `sslMode` é um dropdown
   (padrão + os 5 modos); se o valor atual não for um deles (ex.:
   `${env.SSL_MODE}`), ele entra como opção extra para não ser perdido.
@@ -26,6 +35,27 @@ Lógica em `src/workspace/editor.rs` (`Form`, testada); tela em
   inexistente) só avisam: podem depender da máquina.
 - Clique fora do modal não fecha; Esc não fecha se houver alterações.
 
+## Testar conexão
+
+Pedido do usuário em 2026-10-13. Botão "Testar conexão" (canto inferior
+esquerdo) testa a aba exibida **com as alterações ainda não salvas** (resolve
+com `Form::resolved`, o mesmo `resolve_entry` da carga). Desabilitado enquanto a
+validação falha ou durante o teste.
+
+- `connection::probe` abre um `Client` próprio (`open_client`, compartilhado
+  com `connect`, sem ator), independente da conexão do workspace, e o fecha ao
+  terminar. `readOnly` vale também no teste.
+- Resumo exibido: tempo de conexão (inclui TLS) e se usou TLS; latência
+  mediana/mín/máx de 5 × `SELECT 1`; versão do PostgreSQL, primário/réplica
+  (`pg_is_in_recovery`), tempo no ar; usuário@banco, tamanho do banco, sessão
+  somente leitura; conexões de cliente / `max_connections`, encoding, TimeZone.
+  Falha na consulta dos dados do servidor não invalida o teste (só avisa).
+- O resultado é descartado ao editar qualquer campo ou trocar de aba (ids
+  descartam respostas antigas). A altura reservada para o resumo é descontada
+  da área rolável para que os botões não sejam cortados.
+- Testado contra PG real em `tests/postgres.rs`
+  (`probe_measures_latency_and_reads_server_info`).
+
 ## Gravação
 
 - Só o que mudou é reescrito: campo intocado mantém valor e tipo JSON originais;
@@ -39,7 +69,9 @@ Lógica em `src/workspace/editor.rs` (`Form`, testada); tela em
   do arquivo substituído (um `dbeas.json` com senha pode ser `0600`).
 - Depois de gravar, recarrega os workspaces. Renomear (`name` faz parte do
   `WorkspaceId`) mantém abas, conexão e sessão: `reload_workspaces_keeping`
-  casa pela posição no arquivo e migra as chaves da sessão.
+  casa todas as entradas do arquivo gravado pela posição (o editor nunca remove
+  nem reordena) e migra as chaves da sessão. Entradas novas aparecem na barra
+  lateral como workspaces novos.
 - Conexão aberta **não** é refeita (pode haver transação): o aviso pede para
   desconectar e conectar. Mudança de `sqlFilesDir` reinicia o explorador de
   arquivos.
@@ -49,3 +81,5 @@ Lógica em `src/workspace/editor.rs` (`Form`, testada); tela em
 Verificado no app em 2026-10-13 com captura interna (ver
 [estabilidade da árvore](../arquitetura/iced-estabilidade-da-arvore.md)):
 prévias, asteriscos, erro bloqueante, renomear mantendo o workspace ativo.
+Abas: abrir pela 2ª entrada seleciona a aba dela; nova entrada com ⚠/●/×;
+gravar acrescenta a entrada ao fim e ela aparece na barra lateral.

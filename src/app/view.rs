@@ -13,13 +13,13 @@ use super::quick_open::{QuickOpen, Target};
 use super::state::{Tab, Workspace};
 use super::{App, CloseChoice, DragTarget, Message, Modal};
 use crate::commands::{Command, SHORTCUTS};
-use crate::connection::{Status, TxState};
+use crate::connection::{self, Probe, Status, TxState};
 use crate::data_grid::{self, GridView};
 use crate::metadata::RelationKind;
 use crate::session::{ExplorerMode, TabKind};
 use crate::sql_editor::{self, EditorView};
 use crate::workspace::add;
-use crate::workspace::editor::{Field, Form, Preview};
+use crate::workspace::editor::{Document, Field, Form, Preview};
 
 /// Deslocamento horizontal da barra lateral em relação à janela.
 pub const WORKSPACE_STRIP_WIDTH: f32 = 0.0;
@@ -740,10 +740,17 @@ impl App {
                 col.push(buttons.spacing(8).align_y(Alignment::Center)).into()
             }
             Modal::EditWorkspace {
-                form,
+                doc,
                 error,
                 show_password,
-            } => settings_view(form, error.as_deref(), *show_password, self.window_height),
+                test,
+            } => settings_view(
+                doc,
+                error.as_deref(),
+                *show_password,
+                test.as_ref().map(|t| t.result.as_ref()),
+                self.window_height,
+            ),
             Modal::RemoveWorkspace { file, names } => column![
                 text("Remover workspace").size(18).font(BOLD),
                 text(format!(
@@ -858,13 +865,15 @@ fn workspace_item(index: usize, ws: &Workspace, active: bool) -> Element<'_, Mes
 /// Largura da coluna de rótulos do editor de configurações.
 const SETTINGS_LABEL_WIDTH: f32 = 150.0;
 
-/// Editor gráfico de uma entrada do `dbeas.json`.
+/// Editor gráfico das entradas de um `dbeas.json`: uma aba por entrada.
 fn settings_view<'a>(
-    form: &'a Form,
+    doc: &'a Document,
     error: Option<&'a str>,
     show_password: bool,
+    test: Option<Option<&'a Result<Probe, String>>>,
     window_height: f32,
 ) -> Element<'a, Message> {
+    let form = doc.form();
     let input = |field: Field, placeholder: &'a str| {
         text_input(placeholder, form.value(field))
             .on_input(move |v| Message::SettingsField(field, v))
@@ -1002,17 +1011,17 @@ fn settings_view<'a>(
         ..iced::Padding::ZERO
     });
 
-    let blocking = form.check().err();
-    let status: Element<'a, Message> = match (form.validation(), &blocking) {
+    let blocking = doc.blocking();
+    let status: Element<'a, Message> = match (form.validation(), form.check()) {
         (Ok(()), _) => text("Configuração válida.")
             .size(13)
             .style(success_text)
             .into(),
-        (Err(e), Some(_)) => text(format!("{e} Corrija para salvar."))
+        (Err(e), Err(_)) => text(format!("{e} Corrija para salvar."))
             .size(13)
             .style(danger_text)
             .into(),
-        (Err(e), None) => text(format!(
+        (Err(e), Ok(())) => text(format!(
             "Atenção: {e}. É possível salvar, mas o workspace ficará com erro nesta máquina."
         ))
         .size(13)
@@ -1020,41 +1029,199 @@ fn settings_view<'a>(
         .into(),
     };
 
+    let entry = match form.index {
+        Some(i) => format!("Entrada {} do arquivo.", i + 1),
+        None => "Entrada nova: será acrescentada ao fim do arquivo ao salvar.".into(),
+    };
+    let entry = format!("{entry} Caminhos relativos partem do diretório do dbeas.json.");
+    // Altura das mensagens abaixo do formulário, descontada da área rolável
+    // para que o resumo do teste e os botões caibam na janela.
+    let other_blocking = blocking.as_ref().filter(|(tab, _)| *tab != doc.active);
+    let below = 22.0 * (usize::from(other_blocking.is_some()) + usize::from(error.is_some())) as f32
+        + match test {
+            None => 0.0,
+            Some(Some(Ok(probe))) if probe.server.is_ok() => 150.0,
+            Some(Some(Ok(_))) => 80.0,
+            Some(_) => 40.0,
+        };
     let mut col = column![
-        text("Configurações do workspace").size(18).font(BOLD),
-        text(format!(
-            "{} — entrada {}",
-            form.file.display(),
-            form.index + 1
-        ))
-        .size(12)
-        .font(Font::MONOSPACE)
-        .style(muted),
+        text("Configurações dos workspaces").size(18).font(BOLD),
+        text(doc.file.display().to_string())
+            .size(12)
+            .font(Font::MONOSPACE)
+            .style(muted),
+        settings_tabs(doc),
+        text(entry).size(12).style(muted),
         container(scrollable(fields).height(Length::Shrink))
-            .max_height((window_height - 300.0).max(160.0)),
+            .max_height((window_height - 320.0 - below).max(160.0)),
         status,
     ]
     .spacing(10);
+    // Erro em outra aba também impede salvar: diz qual é.
+    if let Some((tab, e)) = other_blocking {
+        col = col.push(
+            text(format!("{}: {e}", doc.forms[*tab].label()))
+                .size(13)
+                .style(danger_text),
+        );
+    }
+    match test {
+        None => {}
+        Some(None) => col = col.push(text("Testando conexão…").size(13).style(muted)),
+        Some(Some(Ok(probe))) => col = col.push(probe_summary(probe)),
+        Some(Some(Err(e))) => {
+            col = col.push(
+                text(format!("✕ Falha ao conectar: {e}"))
+                    .size(13)
+                    .style(danger_text),
+            )
+        }
+    }
     if let Some(e) = error {
         col = col.push(text(e).size(13).style(danger_text));
     }
+    let testing = matches!(test, Some(None));
     col.push(
         row![
-            text("Caminhos relativos partem do diretório do dbeas.json.")
-                .size(12)
-                .style(muted),
+            button(text(if testing { "Testando…" } else { "Testar conexão" }))
+                .on_press_maybe(
+                    (!testing && form.validation().is_ok())
+                        .then_some(Message::SettingsTestConnection)
+                )
+                .style(button::secondary),
             space::horizontal(),
             button(text("Cancelar"))
                 .on_press(Message::CloseModal)
                 .style(button::secondary),
             button(text("Salvar")).on_press_maybe(
-                (form.is_dirty() && blocking.is_none()).then_some(Message::SettingsSave)
+                (doc.is_dirty() && blocking.is_none()).then_some(Message::SettingsSave)
             ),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
     )
     .into()
+}
+
+/// Abas do editor de configurações: uma por entrada, marcando alterações (●)
+/// e erros que impedem salvar (⚠). Entradas novas podem ser descartadas (×).
+fn settings_tabs(doc: &Document) -> Element<'_, Message> {
+    let mut tabs = row![].spacing(2).align_y(Alignment::Center);
+    for (i, form) in doc.forms.iter().enumerate() {
+        let active = i == doc.active;
+        let mut label = form.label();
+        if form.check().is_err() {
+            label.insert_str(0, "⚠ ");
+        }
+        if form.index.is_none() || form.is_dirty() {
+            label.push_str(" ●");
+        }
+        let mut content = row![text(label).size(13)]
+            .spacing(6)
+            .align_y(Alignment::Center);
+        if form.index.is_none() && doc.forms.len() > 1 {
+            content = content.push(
+                button(text("×").size(13))
+                    .on_press(Message::SettingsRemoveEntry(i))
+                    .padding([0, 4])
+                    .style(button::text),
+            );
+        }
+        tabs = tabs.push(
+            button(content)
+                .on_press(Message::SettingsTab(i))
+                .padding([4, 10])
+                .style(move |theme: &Theme, status| tab_style(theme, status, active)),
+        );
+    }
+    tabs = tabs.push(
+        button(text("+ nova entrada").size(12))
+            .on_press(Message::SettingsAddEntry)
+            .padding([4, 8])
+            .style(button::text),
+    );
+    scrollable(tabs)
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new().width(4).scroller_width(4),
+        ))
+        .width(Length::Fill)
+        .into()
+}
+
+/// Resumo de um teste de conexão bem-sucedido.
+fn probe_summary(probe: &Probe) -> Element<'_, Message> {
+    let line = |label: &'static str, value: String| {
+        row![
+            text(label).size(12).style(muted).width(110),
+            text(value).size(12).font(Font::MONOSPACE),
+        ]
+        .spacing(8)
+    };
+    let mut lines = column![
+        text(format!(
+            "✓ Conexão bem-sucedida em {} ({})",
+            connection::format_duration(probe.connect),
+            if probe.tls { "com TLS" } else { "sem TLS" }
+        ))
+        .size(13)
+        .style(success_text),
+    ]
+    .spacing(3);
+    if let Some((min, median, max)) = probe.latency() {
+        lines = lines.push(line(
+            "Latência",
+            format!(
+                "mediana {} · mín {} · máx {} ({} × SELECT 1)",
+                connection::format_duration(median),
+                connection::format_duration(min),
+                connection::format_duration(max),
+                probe.round_trips.len()
+            ),
+        ));
+    }
+    match &probe.server {
+        Ok(s) => {
+            lines = lines
+                .push(line(
+                    "Servidor",
+                    format!(
+                        "PostgreSQL {} · {} · no ar há {}",
+                        s.version,
+                        if s.replica { "réplica (somente leitura)" } else { "primário" },
+                        connection::format_uptime(s.uptime)
+                    ),
+                ))
+                .push(line(
+                    "Sessão",
+                    format!(
+                        "{}@{} · banco com {}{}",
+                        s.user,
+                        s.database,
+                        s.database_size,
+                        if s.read_only { " · transações somente leitura" } else { "" }
+                    ),
+                ))
+                .push(line(
+                    "Conexões",
+                    format!(
+                        "{} de {} · {} · {}",
+                        s.connections, s.max_connections, s.encoding, s.time_zone
+                    ),
+                ));
+        }
+        Err(e) => {
+            lines = lines.push(
+                text(format!("Dados do servidor indisponíveis: {e}"))
+                    .size(12)
+                    .style(muted),
+            );
+        }
+    }
+    container(lines)
+        .padding(8)
+        .width(Length::Fill)
+        .style(container::bordered_box)
+        .into()
 }
 
 fn section<'a>(title: &'a str) -> Element<'a, Message> {

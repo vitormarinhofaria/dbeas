@@ -24,5 +24,6 @@ cancela a confirmação.
 O arquivo criado tem uma única entrada `{"name": "<nome do diretório>"}`,
 gravada com `create_new` (nunca sobrescreve). Depois de registrar e selecionar
 o workspace, o [editor gráfico](../configuracao/editor-grafico.md) abre nessa
-entrada. Até `dbName` ser preenchido, o workspace aparece com erro de
+entrada, com as mesmas abas e o botão "+ nova entrada" para já acrescentar
+outras configurações ao arquivo criado. Até `dbName` ser preenchido, o workspace aparece com erro de
 configuração na barra lateral (`dbName` é obrigatório).

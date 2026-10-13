@@ -344,3 +344,23 @@ async fn grid_edits_are_atomic_and_join_the_transaction() {
         .unwrap();
     assert_eq!(rs.rows[0][0], Value::Text("x".into()));
 }
+
+#[tokio::test]
+async fn probe_measures_latency_and_reads_server_info() {
+    let Some(cfg) = config(true) else { return };
+    let user = cfg.user.clone();
+    let probe = connection::probe(cfg).await.expect("testa a conexão");
+    assert_eq!(probe.round_trips.len(), 5);
+    assert!(probe.latency().is_some());
+    assert!(!probe.tls);
+    let server = probe.server.expect("dados do servidor");
+    assert_eq!(server.user, user);
+    assert!(server.read_only);
+    assert!(!server.replica);
+    assert!(server.connections >= 1 && server.max_connections >= server.connections);
+    assert!(server.version.starts_with(char::is_numeric), "{}", server.version);
+
+    let mut bad = config(false).unwrap();
+    bad.password = Secret::new(Some("senha-errada".into()));
+    assert!(connection::probe(bad).await.is_err());
+}

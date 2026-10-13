@@ -152,6 +152,163 @@ pub enum TxCommand {
 }
 
 pub async fn connect(config: ResolvedConfig) -> Result<ConnectionHandle, String> {
+    let (client, negotiated) = open_client(&config).await?;
+
+    let cancel = client.cancel_token();
+    let (tx, rx) = mpsc::unbounded_channel();
+    let (tx_watch, tx_state) = watch::channel(TxState::Idle);
+    tokio::spawn(
+        Actor {
+            client,
+            read_only: config.read_only,
+            require_transaction: config.require_transaction,
+            cursor: None,
+            next_cursor: 1,
+            tx: TxState::Idle,
+            tx_watch,
+            log: Vec::new(),
+        }
+        .run(rx),
+    );
+
+    Ok(ConnectionHandle {
+        requests: tx,
+        cancel,
+        tx: tx_state,
+        tls: negotiated,
+        ssl: (config.ssl_mode, config.ssl_root_cert.clone()),
+    })
+}
+
+/// Resumo de um teste de conexão (editor de configurações).
+#[derive(Debug, Clone)]
+pub struct Probe {
+    /// Tempo para conectar e autenticar (inclui o handshake TLS).
+    pub connect: Duration,
+    /// Ida e volta de `SELECT 1`, uma por amostra.
+    pub round_trips: Vec<Duration>,
+    pub tls: bool,
+    /// Dados do servidor; falha aqui não invalida a conexão.
+    pub server: Result<ServerInfo, String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ServerInfo {
+    pub version: String,
+    pub user: String,
+    pub database: String,
+    pub database_size: String,
+    /// Servidor em recuperação (réplica).
+    pub replica: bool,
+    /// A sessão começa transações somente leitura.
+    pub read_only: bool,
+    /// Tempo desde o início do servidor.
+    pub uptime: Duration,
+    pub connections: i64,
+    pub max_connections: i64,
+    pub encoding: String,
+    pub time_zone: String,
+}
+
+impl Probe {
+    /// Latência mínima, mediana e máxima das idas e voltas.
+    pub fn latency(&self) -> Option<(Duration, Duration, Duration)> {
+        let mut samples = self.round_trips.clone();
+        samples.sort();
+        Some((*samples.first()?, samples[samples.len() / 2], *samples.last()?))
+    }
+}
+
+/// Duração legível: décimos de milissegundo abaixo de 10 ms.
+pub fn format_duration(d: Duration) -> String {
+    let ms = d.as_secs_f64() * 1000.0;
+    if ms < 10.0 {
+        format!("{ms:.1} ms").replace('.', ",")
+    } else if ms < 1000.0 {
+        format!("{ms:.0} ms")
+    } else {
+        format!("{:.2} s", ms / 1000.0).replace('.', ",")
+    }
+}
+
+/// Tempo longo, nas duas maiores unidades: "3 d 22 h", "5 h 12 min", "40 s".
+pub fn format_uptime(d: Duration) -> String {
+    let s = d.as_secs();
+    let (days, hours, minutes) = (s / 86_400, s / 3600 % 24, s / 60 % 60);
+    match (days, hours, minutes) {
+        (0, 0, 0) => format!("{s} s"),
+        (0, 0, m) => format!("{m} min"),
+        (0, h, m) => format!("{h} h {m} min"),
+        (d, h, _) => format!("{d} d {h} h"),
+    }
+}
+
+/// Quantidade de `SELECT 1` usados para medir a latência.
+const PROBE_SAMPLES: usize = 5;
+
+/// Conecta, mede a latência e lê dados do servidor; a conexão é fechada ao
+/// terminar. Não passa pelo ator: é independente da conexão do workspace.
+pub async fn probe(config: ResolvedConfig) -> Result<Probe, String> {
+    let started = Instant::now();
+    let (client, tls) = open_client(&config).await?;
+    let connect = started.elapsed();
+
+    let mut round_trips = Vec::with_capacity(PROBE_SAMPLES);
+    for _ in 0..PROBE_SAMPLES {
+        let t = Instant::now();
+        client
+            .simple_query("SELECT 1")
+            .await
+            .map_err(|e| format!("conectou, mas a consulta de teste falhou: {e}"))?;
+        round_trips.push(t.elapsed());
+    }
+
+    let server = client
+        .query_one(
+            "SELECT current_setting('server_version'), current_user::text, \
+                    current_database()::text, \
+                    pg_size_pretty(pg_database_size(current_database())), \
+                    pg_is_in_recovery(), \
+                    current_setting('default_transaction_read_only') = 'on', \
+                    extract(epoch FROM now() - pg_postmaster_start_time())::int8, \
+                    (SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend'), \
+                    current_setting('max_connections')::int8, \
+                    current_setting('server_encoding'), current_setting('TimeZone')",
+            &[],
+        )
+        .await
+        .map(|row| ServerInfo {
+            // "17.2 (Debian 17.2-1.pgdg120+1)" → "17.2".
+            version: row
+                .get::<_, String>(0)
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_string(),
+            user: row.get(1),
+            database: row.get(2),
+            database_size: row.get(3),
+            replica: row.get(4),
+            read_only: row.get(5),
+            uptime: Duration::from_secs(row.get::<_, i64>(6).max(0) as u64),
+            connections: row.get(7),
+            max_connections: row.get(8),
+            encoding: row.get(9),
+            time_zone: row.get(10),
+        })
+        .map_err(|e| e.to_string());
+
+    Ok(Probe {
+        connect,
+        round_trips,
+        tls,
+        server,
+    })
+}
+
+/// Abre o `Client` com a configuração do workspace; a tarefa da conexão
+/// termina quando o cliente é descartado. Retorna também se TLS foi usado.
+async fn open_client(config: &ResolvedConfig) -> Result<(Client, bool), String> {
     let mut pg = tokio_postgres::Config::new();
     pg.host(&config.host)
         .port(config.port)
@@ -191,31 +348,7 @@ pub async fn connect(config: ResolvedConfig) -> Result<ConnectionHandle, String>
             negotiated.load(std::sync::atomic::Ordering::Relaxed),
         )
     };
-
-    let cancel = client.cancel_token();
-    let (tx, rx) = mpsc::unbounded_channel();
-    let (tx_watch, tx_state) = watch::channel(TxState::Idle);
-    tokio::spawn(
-        Actor {
-            client,
-            read_only: config.read_only,
-            require_transaction: config.require_transaction,
-            cursor: None,
-            next_cursor: 1,
-            tx: TxState::Idle,
-            tx_watch,
-            log: Vec::new(),
-        }
-        .run(rx),
-    );
-
-    Ok(ConnectionHandle {
-        requests: tx,
-        cancel,
-        tx: tx_state,
-        tls: negotiated,
-        ssl: (config.ssl_mode, config.ssl_root_cert.clone()),
-    })
+    Ok((client, negotiated))
 }
 
 impl ConnectionHandle {
@@ -842,4 +975,35 @@ async fn read_rows(
 
 fn command_word(sql: &str) -> String {
     sql.split_whitespace().next().unwrap_or("").to_uppercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn probe_latency_and_durations() {
+        let ms = |v: u64| Duration::from_micros(v);
+        let probe = Probe {
+            connect: ms(0),
+            round_trips: vec![ms(900), ms(300), ms(500), ms(400), ms(2000)],
+            tls: false,
+            server: Err(String::new()),
+        };
+        assert_eq!(probe.latency(), Some((ms(300), ms(500), ms(2000))));
+        assert_eq!(format_duration(ms(350)), "0,3 ms");
+        assert_eq!(format_duration(Duration::from_millis(42)), "42 ms");
+        assert_eq!(format_duration(Duration::from_millis(1500)), "1,50 s");
+        let empty = Probe {
+            round_trips: Vec::new(),
+            ..probe
+        };
+        assert_eq!(empty.latency(), None);
+
+        let secs = Duration::from_secs;
+        assert_eq!(format_uptime(secs(40)), "40 s");
+        assert_eq!(format_uptime(secs(5 * 60 + 9)), "5 min");
+        assert_eq!(format_uptime(secs(5 * 3600 + 12 * 60)), "5 h 12 min");
+        assert_eq!(format_uptime(secs(3 * 86_400 + 22 * 3600 + 38 * 60)), "3 d 22 h");
+    }
 }

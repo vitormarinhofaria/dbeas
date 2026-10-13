@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Edição gráfica de uma entrada do `dbeas.json`.
+//! Edição gráfica das entradas de um `dbeas.json`.
 //!
-//! O formulário guarda o texto cru de cada campo (com as referências
+//! O `Document` reúne um formulário por entrada do arquivo (uma aba na tela) e
+//! as entradas novas, acrescentadas ao fim do array ao gravar. Cada formulário
+//! guarda o texto cru de cada campo (com as referências
 //! `${env.NOME}` intactas) e só reescreve no arquivo o que o usuário alterou:
 //! campos intocados mantêm o valor e o tipo JSON originais, e chaves que o
 //! DBeas não conhece são preservadas na posição em que estavam.
@@ -104,12 +106,185 @@ impl fmt::Display for SslChoice {
     }
 }
 
-pub struct Form {
+/// Todas as entradas de um `dbeas.json`, editadas juntas e gravadas de uma vez.
+pub struct Document {
     pub file: PathBuf,
-    /// Posição da entrada no array do arquivo.
-    pub index: usize,
-    base_dir: PathBuf,
     original_text: String,
+    /// Entradas do arquivo, na ordem do array, seguidas das novas. Itens do
+    /// array que não são objetos não viram abas, mas são preservados.
+    pub forms: Vec<Form>,
+    /// Aba exibida.
+    pub active: usize,
+    base_dir: PathBuf,
+    process_env: Vec<(String, String)>,
+}
+
+impl Document {
+    /// Abre `file` com o ambiente do processo, exibindo a entrada `entry`.
+    pub fn open(file: &Path, entry: usize) -> Result<Self, String> {
+        let text = std::fs::read_to_string(file)
+            .map_err(|e| format!("não foi possível ler {}: {e}", file.display()))?;
+        Self::from_text(text, file, entry, std::env::vars().collect())
+    }
+
+    pub fn from_text(
+        text: String,
+        file: &Path,
+        entry: usize,
+        process_env: Vec<(String, String)>,
+    ) -> Result<Self, String> {
+        let items = match serde_json::from_str::<Value>(&text) {
+            Ok(Value::Array(items)) => items,
+            Ok(_) => return Err("o arquivo não contém um array JSON de workspaces".into()),
+            Err(e) => {
+                return Err(format!(
+                    "JSON inválido em {} (linha {}, coluna {}); corrija o arquivo num editor de texto",
+                    file.display(),
+                    e.line(),
+                    e.column()
+                ));
+            }
+        };
+        match items.get(entry) {
+            Some(Value::Object(_)) => {}
+            Some(_) => return Err("a entrada não é um objeto JSON".into()),
+            None if items.is_empty() && entry == 0 => {}
+            None => return Err("a entrada não existe mais no arquivo".into()),
+        }
+        let base_dir = file
+            .parent()
+            .unwrap_or_else(|| Path::new("/"))
+            .to_path_buf();
+        let forms: Vec<Form> = items
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, item)| match item {
+                Value::Object(map) => Some(Form::new(map, Some(i), &base_dir, &process_env)),
+                _ => None,
+            })
+            .collect();
+        let active = forms
+            .iter()
+            .position(|f| f.index == Some(entry))
+            .unwrap_or(0);
+        let mut doc = Self {
+            file: file.to_path_buf(),
+            original_text: text,
+            forms,
+            active,
+            base_dir,
+            process_env,
+        };
+        if doc.forms.is_empty() {
+            doc.add_entry();
+        }
+        Ok(doc)
+    }
+
+    pub fn form(&self) -> &Form {
+        &self.forms[self.active]
+    }
+
+    pub fn form_mut(&mut self) -> &mut Form {
+        &mut self.forms[self.active]
+    }
+
+    pub fn select(&mut self, tab: usize) {
+        if tab < self.forms.len() {
+            self.active = tab;
+        }
+    }
+
+    /// Acrescenta uma entrada vazia (gravada ao fim do array) e a exibe.
+    pub fn add_entry(&mut self) {
+        self.forms.push(Form::new(
+            Map::new(),
+            None,
+            &self.base_dir,
+            &self.process_env,
+        ));
+        self.active = self.forms.len() - 1;
+    }
+
+    /// Descarta uma entrada nova, ainda não gravada. Entradas do arquivo não
+    /// são removidas por aqui.
+    pub fn remove_new_entry(&mut self, tab: usize) {
+        if self.forms.get(tab).is_some_and(|f| f.index.is_none()) && self.forms.len() > 1 {
+            self.forms.remove(tab);
+            if self.active >= tab && self.active > 0 {
+                self.active -= 1;
+            }
+        }
+    }
+
+    /// Há algo a gravar: entrada alterada ou entrada nova.
+    pub fn is_dirty(&self) -> bool {
+        self.forms.iter().any(|f| f.index.is_none() || f.is_dirty())
+    }
+
+    /// Primeira aba com erro que impede gravar.
+    pub fn blocking(&self) -> Option<(usize, String)> {
+        self.forms
+            .iter()
+            .enumerate()
+            .find_map(|(i, f)| f.check().err().map(|e| (i, e)))
+    }
+
+    /// Grava todas as entradas. Recusa se o arquivo mudou desde a abertura,
+    /// para não sobrescrever edições feitas fora do DBeas.
+    pub fn save(&self) -> Result<(), String> {
+        if let Some((tab, e)) = self.blocking() {
+            return Err(format!("{}: {e}", self.forms[tab].label()));
+        }
+        let current = std::fs::read_to_string(&self.file)
+            .map_err(|e| format!("não foi possível ler {}: {e}", self.file.display()))?;
+        if current != self.original_text {
+            return Err(
+                "o arquivo foi alterado fora do editor depois que ele foi aberto. \
+                 Feche e abra o editor de novo para não perder essas alterações."
+                    .into(),
+            );
+        }
+        let text = self.render(&current)?;
+        let target = std::fs::canonicalize(&self.file).unwrap_or_else(|_| self.file.clone());
+        fsutil::atomic_write(&target, text.as_bytes())
+            .map_err(|e| format!("não foi possível gravar {}: {e}", target.display()))
+    }
+
+    /// Texto completo do arquivo com as entradas substituídas e as novas
+    /// acrescentadas, mantendo a indentação usada no original.
+    fn render(&self, current: &str) -> Result<String, String> {
+        let Ok(Value::Array(mut items)) = serde_json::from_str::<Value>(current) else {
+            return Err("o arquivo não contém mais um array JSON válido".into());
+        };
+        for form in &self.forms {
+            let value = Value::Object(form.to_object());
+            match form.index {
+                Some(i) => {
+                    *items
+                        .get_mut(i)
+                        .ok_or("a entrada não existe mais no arquivo")? = value
+                }
+                None => items.push(value),
+            }
+        }
+
+        let indent = detect_indent(current);
+        let formatter = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
+        let mut buf = Vec::new();
+        let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
+        serde::Serialize::serialize(&Value::Array(items), &mut ser).map_err(|e| e.to_string())?;
+        let mut text = String::from_utf8(buf).map_err(|e| e.to_string())?;
+        text.push('\n');
+        Ok(text)
+    }
+}
+
+/// Formulário de uma entrada (uma aba do editor).
+pub struct Form {
+    /// Posição da entrada no array do arquivo; `None` para entrada nova.
+    pub index: Option<usize>,
+    base_dir: PathBuf,
     original: Map<String, Value>,
     initial: [String; 10],
     values: [String; 10],
@@ -126,37 +301,12 @@ pub struct Form {
 }
 
 impl Form {
-    /// Abre a entrada `index` de `file` com o ambiente do processo.
-    pub fn open(file: &Path, index: usize) -> Result<Self, String> {
-        let text = std::fs::read_to_string(file)
-            .map_err(|e| format!("não foi possível ler {}: {e}", file.display()))?;
-        Self::from_text(text, file, index, std::env::vars().collect())
-    }
-
-    pub fn from_text(
-        text: String,
-        file: &Path,
-        index: usize,
-        process_env: Vec<(String, String)>,
-    ) -> Result<Self, String> {
-        let items = match serde_json::from_str::<Value>(&text) {
-            Ok(Value::Array(items)) => items,
-            Ok(_) => return Err("o arquivo não contém um array JSON de workspaces".into()),
-            Err(e) => {
-                return Err(format!(
-                    "JSON inválido em {} (linha {}, coluna {}); corrija o arquivo num editor de texto",
-                    file.display(),
-                    e.line(),
-                    e.column()
-                ));
-            }
-        };
-        let original = match items.into_iter().nth(index) {
-            Some(Value::Object(map)) => map,
-            Some(_) => return Err("a entrada não é um objeto JSON".into()),
-            None => return Err("a entrada não existe mais no arquivo".into()),
-        };
-
+    fn new(
+        original: Map<String, Value>,
+        index: Option<usize>,
+        base_dir: &Path,
+        process_env: &[(String, String)],
+    ) -> Self {
         let mut initial: [String; 10] = Default::default();
         for field in Field::ALL {
             initial[field.slot()] = original.get(field.key()).map(text_of).unwrap_or_default();
@@ -175,13 +325,8 @@ impl Form {
         let initial_bools = [bool_of("readOnly"), bool_of("requireTransaction")];
 
         let mut form = Self {
-            file: file.to_path_buf(),
             index,
-            base_dir: file
-                .parent()
-                .unwrap_or_else(|| Path::new("/"))
-                .to_path_buf(),
-            original_text: text,
+            base_dir: base_dir.to_path_buf(),
             values: initial.clone(),
             initial,
             env: initial_env.clone(),
@@ -190,13 +335,23 @@ impl Form {
             require_transaction: initial_bools[1],
             initial_bools,
             original,
-            process_env,
+            process_env: process_env.to_vec(),
             file_vars: Ok(Vec::new()),
             env_map: EnvMap::new(),
             validation: Ok(()),
         };
         form.reload_env_file();
-        Ok(form)
+        form
+    }
+
+    /// Rótulo da aba: o `name` digitado, ou a posição da entrada.
+    pub fn label(&self) -> String {
+        let name = self.value(Field::Name).trim();
+        match self.index {
+            _ if !name.is_empty() => name.to_string(),
+            Some(i) => format!("entrada {}", i + 1),
+            None => "nova entrada".into(),
+        }
     }
 
     pub fn value(&self, field: Field) -> &str {
@@ -285,6 +440,18 @@ impl Form {
         }
     }
 
+    /// A entrada como ficará gravada, resolvida como na carga do arquivo
+    /// (para testar a conexão antes de salvar).
+    pub fn resolved(&self) -> Result<config::ResolvedConfig, String> {
+        self.check()?;
+        config::resolve_entry(
+            &self.to_object(),
+            &self.base_dir,
+            self.process_env.iter().cloned(),
+        )
+        .map_err(|e| e.to_string())
+    }
+
     /// Resultado da validação completa da entrada como ficará gravada.
     pub fn validation(&self) -> Result<(), &str> {
         self.validation.as_ref().map(|_| ()).map_err(String::as_str)
@@ -371,46 +538,6 @@ impl Form {
         out
     }
 
-    /// Grava a entrada no arquivo. Recusa se o arquivo mudou desde a abertura,
-    /// para não sobrescrever edições feitas fora do DBeas.
-    pub fn save(&self) -> Result<(), String> {
-        self.check()?;
-        let current = std::fs::read_to_string(&self.file)
-            .map_err(|e| format!("não foi possível ler {}: {e}", self.file.display()))?;
-        if current != self.original_text {
-            return Err(
-                "o arquivo foi alterado fora do editor depois que ele foi aberto. \
-                 Feche e abra o editor de novo para não perder essas alterações."
-                    .into(),
-            );
-        }
-        let text = self.render(&current)?;
-        let target = std::fs::canonicalize(&self.file).unwrap_or_else(|_| self.file.clone());
-        fsutil::atomic_write(&target, text.as_bytes())
-            .map_err(|e| format!("não foi possível gravar {}: {e}", target.display()))
-    }
-
-    /// Texto completo do arquivo com esta entrada substituída, mantendo a
-    /// indentação usada no original.
-    fn render(&self, current: &str) -> Result<String, String> {
-        let Ok(Value::Array(mut items)) = serde_json::from_str::<Value>(current) else {
-            return Err("o arquivo não contém mais um array JSON válido".into());
-        };
-        let slot = items
-            .get_mut(self.index)
-            .ok_or("a entrada não existe mais no arquivo")?;
-        *slot = Value::Object(self.to_object());
-
-        let indent = detect_indent(current);
-        let formatter = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
-        let mut buf = Vec::new();
-        let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
-        serde::Serialize::serialize(&Value::Array(items), &mut ser).map_err(|e| e.to_string())?;
-        let mut text = String::from_utf8(buf).map_err(|e| e.to_string())?;
-        text.push('\n');
-        Ok(text)
-    }
-
     fn text_update(&self, field: Field) -> Option<Value> {
         let text = self.value(field);
         if text == self.initial[field.slot()] {
@@ -479,15 +606,7 @@ impl Form {
             .collect();
         let file_vars = self.file_vars.as_deref().unwrap_or_default();
         self.env_map = env::merge(self.process_env.iter().cloned(), file_vars, &overrides);
-        self.validation = self.check().and_then(|()| {
-            config::resolve_entry(
-                &self.to_object(),
-                &self.base_dir,
-                self.process_env.iter().cloned(),
-            )
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-        });
+        self.validation = self.resolved().map(|_| ());
     }
 }
 
@@ -522,7 +641,9 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
-        Form::from_text(json.to_string(), Path::new("/p/dbeas.json"), 0, env).unwrap()
+        let mut doc =
+            Document::from_text(json.to_string(), Path::new("/p/dbeas.json"), 0, env).unwrap();
+        doc.forms.remove(0)
     }
 
     #[test]
@@ -630,13 +751,14 @@ mod tests {
     fn env_file_feeds_previews() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(".env"), "H=do_arquivo\n").unwrap();
-        let mut f = Form::from_text(
+        let mut doc = Document::from_text(
             r#"[{"name":"a","dbName":"x","dbHost":"${env.H}"}]"#.into(),
             &dir.path().join("dbeas.json"),
             0,
             Vec::new(),
         )
         .unwrap();
+        let f = doc.form_mut();
         assert!(matches!(f.preview(Field::DbHost), Some(Preview::Error(_))));
         f.set(Field::EnvFile, ".env".into());
         assert_eq!(
@@ -688,9 +810,10 @@ mod tests {
         let text = "[\n    {\"name\": \"a\", \"dbName\": \"x\"},\n    {\"name\": \"b\", \"dbName\": \"y\"}\n]\n";
         std::fs::write(&path, text).unwrap();
 
-        let mut f = Form::open(&path, 1).unwrap();
-        f.set(Field::DbHost, "db.local".into());
-        f.save().unwrap();
+        let mut doc = Document::open(&path, 1).unwrap();
+        assert_eq!(doc.active, 1);
+        doc.form_mut().set(Field::DbHost, "db.local".into());
+        doc.save().unwrap();
         let saved = std::fs::read_to_string(&path).unwrap();
         assert!(
             saved.contains("\n    {\n        \"name\": \"a\""),
@@ -704,10 +827,91 @@ mod tests {
         );
 
         // O arquivo mudou depois da abertura: não grava.
-        let mut f = Form::open(&path, 0).unwrap();
-        f.set(Field::DbHost, "outro".into());
+        let mut doc = Document::open(&path, 0).unwrap();
+        doc.form_mut().set(Field::DbHost, "outro".into());
         std::fs::write(&path, text).unwrap();
-        assert!(f.save().is_err());
+        assert!(doc.save().is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[test]
+    fn document_has_one_tab_per_object_entry() {
+        let doc = Document::from_text(
+            r#"[{"name":"a","dbName":"x"},42,{"dbName":"y"}]"#.into(),
+            Path::new("/p/dbeas.json"),
+            2,
+            Vec::new(),
+        )
+        .unwrap();
+        let labels: Vec<_> = doc.forms.iter().map(Form::label).collect();
+        assert_eq!(labels, ["a", "entrada 3"]);
+        assert_eq!(doc.active, 1);
+        assert!(!doc.is_dirty());
+
+        let err = Document::from_text("[1]".into(), Path::new("/p/dbeas.json"), 0, Vec::new());
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn empty_array_opens_with_a_new_entry() {
+        let doc =
+            Document::from_text("[]".into(), Path::new("/p/dbeas.json"), 0, Vec::new()).unwrap();
+        assert_eq!(doc.forms.len(), 1);
+        assert_eq!(doc.form().index, None);
+        assert!(doc.is_dirty());
+        assert!(doc.blocking().is_some());
+    }
+
+    #[test]
+    fn new_entries_are_appended_and_edits_saved_together() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dbeas.json");
+        std::fs::write(&path, "[{\"name\":\"a\",\"dbName\":\"x\"},true]").unwrap();
+
+        let mut doc = Document::open(&path, 0).unwrap();
+        doc.form_mut().set(Field::DbHost, "h".into());
+        doc.add_entry();
+        assert_eq!(doc.active, 1);
+        assert_eq!(doc.form().label(), "nova entrada");
+        // Entrada nova incompleta impede gravar e aponta a aba.
+        assert_eq!(doc.blocking().map(|(tab, _)| tab), Some(1));
+        assert!(doc.save().is_err());
+        doc.form_mut().set(Field::Name, "b".into());
+        doc.form_mut().set(Field::DbName, "y".into());
+        doc.form_mut().set(Field::DbPort, "5433".into());
+        assert!(doc.blocking().is_none());
+        doc.save().unwrap();
+
+        let value: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!([
+                {"name":"a","dbName":"x","dbHost":"h"},
+                true,
+                {"name":"b","dbPort":5433,"dbName":"y"}
+            ])
+        );
+    }
+
+    #[test]
+    fn only_new_entries_can_be_discarded() {
+        let mut doc = Document::from_text(
+            r#"[{"name":"a","dbName":"x"}]"#.into(),
+            Path::new("/p/dbeas.json"),
+            0,
+            Vec::new(),
+        )
+        .unwrap();
+        doc.remove_new_entry(0);
+        assert_eq!(doc.forms.len(), 1);
+        doc.add_entry();
+        doc.add_entry();
+        assert_eq!(doc.active, 2);
+        doc.remove_new_entry(1);
+        assert_eq!((doc.forms.len(), doc.active), (2, 1));
+        doc.remove_new_entry(1);
+        assert_eq!((doc.forms.len(), doc.active), (1, 0));
+        assert!(!doc.is_dirty());
     }
 }
