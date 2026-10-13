@@ -3,7 +3,7 @@
 Arquivo de continuidade: leia antes de retomar o trabalho com um contexto novo.
 Atualize ao fim de cada etapa.
 
-**Última atualização:** 2026-10-13 (abas restauradas em branco)
+**Última atualização:** 2026-10-13 (excluir linhas selecionadas na grade)
 
 ## Como rodar e testar
 
@@ -94,7 +94,10 @@ futura. Autocomplete automático (após `.` e 2+ letras) e por Ctrl+Espaço.
 1. ~~Transformações de SQL~~ — feito na rodada 2 (ver
    [transformações](../arquitetura/transformacoes-sql.md)).
 2. ~~Edição de dados~~ — feito na rodada 3 (ver [edição](../usabilidade/edicao-dados.md)).
-   Falta: inserir/excluir linhas.
+   Excluir linhas selecionadas (Del/botão, popup de confirmação), foco da grade
+   e navegação por setas feitos em 2026-10-13, testados em unidade e com PG; o
+   usuário relatou o Del indo para o editor (corrigido com `focus_grid`, ainda
+   não verificado no app). Falta: inserir linhas.
 3. ~~requireTransaction~~ — feito na rodada 3 (ver [transações](../usabilidade/transacoes.md)).
 4. ~~Autocomplete / diagnóstico~~ — feito na rodada 4 (embutido). Pendente opcional:
    integração com servidor LSP externo.

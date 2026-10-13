@@ -9,7 +9,7 @@ mod right_click;
 mod state;
 mod view;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -92,6 +92,8 @@ pub struct App {
     pending_execution: Option<PendingExecution>,
     /// Janela cujo fechamento foi pedido, enquanto há transação a resolver.
     closing_window: Option<window::Id>,
+    /// Modificadores pressionados agora (Ctrl/Shift no clique de linha).
+    modifiers: Modifiers,
 }
 
 /// Menu de contexto de uma aba (clique direito).
@@ -173,6 +175,21 @@ pub enum Modal {
         error: Option<String>,
         input_id: iced::widget::Id,
         creating: bool,
+    },
+    /// Confirmação da exclusão das linhas selecionadas na grade (Del).
+    DeleteRows {
+        tab: u64,
+        /// `schema.tabela`.
+        table: String,
+        /// Chave de cada linha a excluir, para exibição.
+        keys: Vec<String>,
+        sql: String,
+        /// Alterações pendentes nessas linhas, descartadas com a exclusão.
+        dropped_edits: usize,
+        error: Option<String>,
+        running: bool,
+        needs_transaction: bool,
+        in_transaction: bool,
     },
     /// SQL das alterações da grade, antes de executar (Ctrl+S).
     GridSave {
@@ -340,6 +357,19 @@ pub enum Message {
     EditorScrolled(Viewport),
     GridScrolled(Viewport),
     SelectCell(usize, usize),
+    /// Clique no número da linha (Ctrl/Shift pelos modificadores atuais).
+    SelectRow(usize),
+    /// Del ou botão Excluir: abre a confirmação da exclusão.
+    DeleteRowsDialog,
+    DeleteRowsConfirm,
+    RowsDeleted {
+        ws: WorkspaceId,
+        tab: u64,
+        rows: BTreeSet<usize>,
+        log: Vec<String>,
+        result: Result<Vec<Vec<crate::query::Value>>, QueryError>,
+    },
+    ModifiersChanged(Modifiers),
     CompletionMove(i32),
     CompletionAccept,
     CompletionClose,
@@ -473,6 +503,7 @@ impl App {
             after_tx: None,
             pending_execution: None,
             closing_window: None,
+            modifiers: Modifiers::empty(),
         };
 
         let mut tasks = vec![app.reload_workspaces()];
@@ -517,6 +548,9 @@ impl App {
                     modifiers,
                     captured: status == event::Status::Captured,
                 }),
+                Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) => {
+                    Some(Message::ModifiersChanged(modifiers))
+                }
                 Event::Window(window::Event::Resized(size)) => Some(Message::WindowResized(size)),
                 // Clique fora de qualquer widget fecha o menu de contexto.
                 Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
@@ -1428,7 +1462,15 @@ impl App {
                     .collect();
                 self.request_close_tabs(ids)
             }
-            Message::Editor(action) => self.editor_action(action),
+            Message::Editor(action) => {
+                // Clicar ou digitar no editor tira o foco da grade; rolar, não.
+                if !matches!(action, text_editor::Action::Scroll { .. }) {
+                    if let Some(tab) = self.active_tab_mut() {
+                        tab.grid_focused = false;
+                    }
+                }
+                self.editor_action(action)
+            }
             Message::EditorScrolled(viewport) => {
                 if let Some(tab) = self.active_tab_mut() {
                     tab.editor_viewport = Some(viewport);
@@ -1439,7 +1481,9 @@ impl App {
                 let Some(tab) = self.active_tab_mut() else {
                     return Task::none();
                 };
+                tab.grid_scroll.offset_x = viewport.absolute_offset().x;
                 tab.grid_scroll.offset_y = viewport.absolute_offset().y;
+                tab.grid_scroll.viewport_width = viewport.bounds().width;
                 tab.grid_scroll.viewport_height = viewport.bounds().height;
                 let header = operation::scroll_to(
                     tab.grid_header_id.clone(),
@@ -1483,10 +1527,37 @@ impl App {
                 self.commit_edit();
                 if let Some(tab) = self.active_tab_mut() {
                     tab.selected = Some((row, col));
+                    tab.row_selection.clear();
                     tab.columns.pressed = None;
                 }
+                self.focus_grid()
+            }
+            Message::SelectRow(row) => {
+                self.commit_edit();
+                let (ctrl, shift) = (self.modifiers.command(), self.modifiers.shift());
+                if let Some(tab) = self.active_tab_mut() {
+                    tab.row_selection.click(row, ctrl, shift);
+                    tab.selected = None;
+                    tab.columns.pressed = None;
+                }
+                self.focus_grid()
+            }
+            Message::ModifiersChanged(modifiers) => {
+                self.modifiers = modifiers;
                 Task::none()
             }
+            Message::DeleteRowsDialog => {
+                self.open_delete_rows();
+                Task::none()
+            }
+            Message::DeleteRowsConfirm => self.delete_rows(),
+            Message::RowsDeleted {
+                ws,
+                tab,
+                rows,
+                log,
+                result,
+            } => self.on_rows_deleted(ws, tab, rows, log, result),
             Message::CompletionMove(delta) => {
                 if let Some(c) = self.active_tab_mut().and_then(|t| t.completion.as_mut()) {
                     let len = c.data.items.len().max(1) as i32;
@@ -2666,6 +2737,7 @@ impl App {
                     layout_after_execution(t, &result, outcome.result_statement);
                     t.run.result = Some(result);
                     t.selected = None;
+                    t.row_selection.clear();
                     t.grid_scroll.offset_y = 0.0;
                     return operation::scroll_to(
                         t.grid_body_id.clone(),
@@ -2921,6 +2993,37 @@ impl App {
                 }
             }
         }
+        // Com a grade focada, setas navegam e Del exclui as linhas
+        // selecionadas; nunca quando um campo (editor SQL, editor de célula)
+        // capturou a tecla.
+        let grid_focused = self
+            .active_ws()
+            .is_some_and(|w| w.tabs[w.active_tab].grid_focused);
+        if !captured && grid_focused && !modifiers.command() && !modifiers.alt() {
+            let arrow = match key.as_ref() {
+                Key::Named(key::Named::ArrowUp) => Some(data_grid::Arrow::Up),
+                Key::Named(key::Named::ArrowDown) => Some(data_grid::Arrow::Down),
+                Key::Named(key::Named::ArrowLeft) => Some(data_grid::Arrow::Left),
+                Key::Named(key::Named::ArrowRight) => Some(data_grid::Arrow::Right),
+                _ => None,
+            };
+            if let Some(arrow) = arrow {
+                return self.navigate_grid(arrow, modifiers.shift());
+            }
+            if matches!(key.as_ref(), Key::Named(key::Named::Delete)) && !modifiers.shift() {
+                let has_rows = self
+                    .active_ws()
+                    .is_some_and(|w| !w.tabs[w.active_tab].row_selection.rows.is_empty());
+                if has_rows {
+                    self.open_delete_rows();
+                } else {
+                    self.notify(
+                        "Selecione linhas pelo número (Shift+↑/↓ estende) para excluí-las com Del",
+                    );
+                }
+                return Task::none();
+            }
+        }
         if captured {
             // Atalhos da aplicação continuam valendo dentro do editor de célula.
             let editing = self
@@ -2967,6 +3070,7 @@ fn closes_file_menu(message: &Message) -> bool {
             | Message::DragStart(_)
             | Message::StartEdit(..)
             | Message::SelectCell(..)
+            | Message::SelectRow(_)
             | Message::HeaderPressed(_)
             | Message::NewFileDialog
             | Message::FilesListed(..)
@@ -3636,6 +3740,205 @@ impl App {
             format!("{rows} linha(s) alterada(s) na transação; use Confirmar… para gravar")
         } else {
             format!("{rows} linha(s) gravada(s)")
+        });
+        Task::none()
+    }
+
+    /// Dá o foco do teclado à grade da aba ativa. O editor SQL precisa perder
+    /// o foco explicitamente: o clique na grade é capturado por ela e não
+    /// chega ao editor (o `stack` que o envolve para em eventos capturados).
+    fn focus_grid(&mut self) -> Task<Message> {
+        let Some(tab) = self.active_tab_mut() else {
+            return Task::none();
+        };
+        tab.grid_focused = true;
+        if tab.editing.is_some() {
+            return Task::none();
+        }
+        iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::unfocus())
+    }
+
+    /// Setas na grade focada: move a seleção e rola até ela.
+    fn navigate_grid(&mut self, arrow: data_grid::Arrow, shift: bool) -> Task<Message> {
+        let Some(tab) = self.active_tab_mut() else {
+            return Task::none();
+        };
+        let Some(rows) = tab.run.result.as_ref().map(|r| r.rows.len()) else {
+            return Task::none();
+        };
+        let Some(cell) = data_grid::navigate(
+            &mut tab.selected,
+            &mut tab.row_selection,
+            &tab.columns.order,
+            rows,
+            arrow,
+            shift,
+        ) else {
+            return Task::none();
+        };
+        match data_grid::reveal_cell(&tab.grid_scroll, &tab.widths, &tab.columns.order, cell) {
+            (None, None) => Task::none(),
+            (x, y) => operation::scroll_to(tab.grid_body_id.clone(), AbsoluteOffset { x, y }),
+        }
+    }
+
+    /// Linhas selecionadas da aba ativa e os `DELETE` correspondentes.
+    fn build_row_deletes(
+        &self,
+    ) -> Result<(Vec<data_edit::RowDelete>, data_edit::EditTarget), String> {
+        let ws = self.active_ws().ok_or("nenhum workspace ativo")?;
+        let tab = &ws.tabs[ws.active_tab];
+        let result = tab.run.result.as_ref().ok_or("sem resultado")?;
+        let target = match &tab.edit_target {
+            Some(Ok(target)) => target.clone(),
+            Some(Err(reason)) => return Err(format!("resultado não editável: {reason}")),
+            None => return Err("resultado não editável".into()),
+        };
+        Ok((
+            data_edit::build_deletes(&target, result, &tab.row_selection.rows)?,
+            target,
+        ))
+    }
+
+    fn open_delete_rows(&mut self) {
+        if self.modal.is_some() {
+            return;
+        }
+        self.commit_edit();
+        let (deletes, target) = match self.build_row_deletes() {
+            Ok(built) => built,
+            Err(e) => {
+                self.notify_error(format!("Não é possível excluir as linhas: {e}"));
+                return;
+            }
+        };
+        if deletes.is_empty() {
+            return;
+        }
+        let ws = self.active_ws().expect("workspace ativo");
+        let tab = &ws.tabs[ws.active_tab];
+        let dropped_edits = tab
+            .pending
+            .keys()
+            .filter(|(row, _)| tab.row_selection.rows.contains(row))
+            .count();
+        self.modal = Some(Modal::DeleteRows {
+            tab: tab.id,
+            table: format!("{}.{}", target.schema, target.table),
+            keys: deletes.iter().map(|d| d.key.clone()).collect(),
+            sql: deletes
+                .iter()
+                .map(|d| d.display.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+            dropped_edits,
+            error: None,
+            running: false,
+            needs_transaction: ws.require_transaction() && ws.tx != TxState::Active,
+            in_transaction: ws.tx == TxState::Active,
+        });
+    }
+
+    fn delete_rows(&mut self) -> Task<Message> {
+        let fail = |app: &mut Self, message: String| {
+            if let Some(Modal::DeleteRows { error, running, .. }) = &mut app.modal {
+                *error = Some(message);
+                *running = false;
+            }
+            Task::none()
+        };
+        let (deletes, target) = match self.build_row_deletes() {
+            Ok(built) => built,
+            Err(e) => return fail(self, format!("Não foi possível preparar a exclusão: {e}")),
+        };
+        let Some(ws) = self.active_ws() else {
+            return Task::none();
+        };
+        let Some(handle) = ws.connection.clone() else {
+            return fail(self, "Workspace desconectado".into());
+        };
+        let tab = &ws.tabs[ws.active_tab];
+        let table = format!("{}.{}", target.schema, target.table);
+        let rows = tab.row_selection.rows.clone();
+        let log: Vec<String> = deletes
+            .iter()
+            .map(|d| format!("{table} [{}] excluída", d.key))
+            .collect();
+        let statements = deletes
+            .into_iter()
+            .map(|d| connection::EditStatement {
+                sql: d.sql,
+                params: d.params,
+                label: format!("DELETE {table} [{}]", d.key),
+            })
+            .collect();
+        let ws_id = ws.desc.id.clone();
+        let tab_id = tab.id;
+        if let Some(Modal::DeleteRows { running, error, .. }) = &mut self.modal {
+            *running = true;
+            *error = None;
+        }
+        Task::perform(
+            async move { handle.apply_edits(statements).await },
+            move |result| Message::RowsDeleted {
+                ws: ws_id.clone(),
+                tab: tab_id,
+                rows: rows.clone(),
+                log: log.clone(),
+                result,
+            },
+        )
+    }
+
+    fn on_rows_deleted(
+        &mut self,
+        ws: WorkspaceId,
+        tab: u64,
+        rows: BTreeSet<usize>,
+        log: Vec<String>,
+        result: Result<Vec<Vec<crate::query::Value>>, QueryError>,
+    ) -> Task<Message> {
+        let Some(w) = self.ws_by_id(&ws) else {
+            return Task::none();
+        };
+        w.sync_tx();
+        let in_transaction = w.tx == TxState::Active;
+        if let Err(e) = result {
+            let message = format!("Linhas não excluídas: {}", describe_error(&e));
+            if let Some(Modal::DeleteRows { error, running, .. }) = &mut self.modal {
+                *error = Some(message);
+                *running = false;
+            } else {
+                self.notify_error(message);
+            }
+            return Task::none();
+        }
+        if in_transaction {
+            w.grid_log.extend(log);
+        }
+        if let Some(t) = w.tabs.iter_mut().find(|t| t.id == tab) {
+            if let Some(rs) = &mut t.run.result {
+                for &row in rows.iter().rev() {
+                    if row < rs.rows.len() {
+                        rs.rows.remove(row);
+                    }
+                }
+            }
+            t.pending = data_edit::pending_after_delete(&t.pending, &rows);
+            t.selected = t
+                .selected
+                .and_then(|(row, col)| data_edit::index_after_delete(row, &rows).map(|r| (r, col)));
+            t.editing = None;
+            t.row_selection.clear();
+        }
+        if matches!(self.modal, Some(Modal::DeleteRows { .. })) {
+            self.modal = None;
+        }
+        let count = rows.len();
+        self.notify(if in_transaction {
+            format!("{count} linha(s) excluída(s) na transação; use Confirmar… para gravar")
+        } else {
+            format!("{count} linha(s) excluída(s)")
         });
         Task::none()
     }

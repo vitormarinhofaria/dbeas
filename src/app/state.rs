@@ -16,7 +16,7 @@ use iced::widget::text_editor::Content;
 use crate::completion::Completion;
 use crate::connection::{ConnectionHandle, Status, TxState};
 use crate::data_edit::{EditTarget, Pending};
-use crate::data_grid::ScrollState;
+use crate::data_grid::{RowSelection, ScrollState};
 use crate::diagnostics::Diagnostic;
 use crate::file_explorer::FileEntry;
 use crate::metadata::Catalog;
@@ -158,6 +158,10 @@ pub struct Tab {
     pub grid_scroll: ScrollState,
     pub widths: Vec<f32>,
     pub selected: Option<(usize, usize)>,
+    /// Linhas selecionadas pela coluna de números (para excluir).
+    pub row_selection: RowSelection,
+    /// A grade tem o foco do teclado (setas e Del), desde o último clique nela.
+    pub grid_focused: bool,
     pub columns: ColumnLayout,
     /// Instrução que produziu o resultado atual, para transformações.
     pub source: Option<Source>,
@@ -295,6 +299,8 @@ impl Tab {
             grid_scroll: ScrollState::default(),
             widths: Vec::new(),
             selected: None,
+            row_selection: RowSelection::default(),
+            grid_focused: false,
             columns: ColumnLayout::default(),
             source: None,
             pristine: None,

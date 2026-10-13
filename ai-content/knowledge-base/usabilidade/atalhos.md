@@ -15,6 +15,9 @@ está focado. Fora do editor, só disparam se nenhum widget capturou a tecla.
 | Ctrl+Tab / Ctrl+Shift+Tab | Próximo/anterior workspace (circular) |
 | Ctrl+W | Fechar aba (o Scratch não fecha) |
 | F5 | Recarregar metadados (e a lista de arquivos) |
+| Del (grade focada) | Excluir as linhas selecionadas na grade (pede confirmação) |
+| ←/→/↑/↓ (grade focada) | Mover a célula selecionada (com linhas selecionadas, ↑/↓ movem a linha) |
+| Shift+↑/↓ (grade focada) | Estender a seleção de linhas |
 | Ctrl+Espaço | Sugerir tabelas, colunas e palavras-chave |
 | Tab (no editor) | Insere 4 espaços (com a lista de sugestões ativa: aceita) |
 | ↑/↓ (lista aberta) | Ativa a lista e navega entre as sugestões |
@@ -30,6 +33,10 @@ está focado. Fora do editor, só disparam se nenhum widget capturou a tecla.
 - **No editor de célula**, os atalhos da aplicação continuam valendo (o campo de
   texto captura as teclas, mas o mapa central é consultado mesmo assim); Esc
   cancela a edição.
+- **Del e setas** não passam pelo mapa central: o editor SQL consulta o mapa
+  antes das próprias teclas e perderia o Del e as setas. Eles só agem na grade
+  quando ela tem o foco (último clique foi nela) e nenhum widget capturou a tecla
+  (`App::on_key`).
 - **Ctrl+Tab** troca workspace, e não aba, por decisão da spec (§9).
 
 ## Mouse na grade
@@ -41,3 +48,5 @@ está focado. Fora do editor, só disparam se nenhum widget capturou a tecla.
 | Arrastar cabeçalho e soltar sobre outro | Move a coluna e reordena o SELECT, quando seguro |
 | Botão "Restaurar colunas" | Mostra de novo as colunas ocultas e restaura o SQL |
 | Duplo clique na célula | Edita o valor (resultado editável) |
+| Clique na célula ou no número da linha | Dá o foco do teclado à grade (tira do editor SQL) |
+| Clique no número da linha | Seleciona a linha (Ctrl alterna, Shift intervalo) |

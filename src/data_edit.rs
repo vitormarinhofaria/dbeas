@@ -11,8 +11,10 @@
 //! As alterações viram um `UPDATE ... RETURNING` por linha, com valores em
 //! parâmetros (`$n::text::<tipo>`, conversão pela entrada textual do tipo). O
 //! texto exibido no popup troca os parâmetros por literais equivalentes.
+//! Linhas selecionadas são excluídas com um `DELETE ... RETURNING` por linha,
+//! identificada pela chave primária.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::metadata::{Catalog, RelationKind, quote_ident};
 use crate::query::{ResultSet, Value};
@@ -166,32 +168,7 @@ pub fn build_updates(
             columns.push(col);
         }
 
-        let mut condition = Vec::new();
-        let mut condition_display = Vec::new();
-        for &col in &target.key {
-            let column = target.columns[col]
-                .as_ref()
-                .expect("coluna da chave mapeada");
-            let original = key_text(&values[col]).ok_or_else(|| {
-                format!(
-                    "o valor da chave {} na linha {} não pode ser usado",
-                    column.name,
-                    row + 1
-                )
-            })?;
-            params.push(Some(original.clone()));
-            condition.push(format!(
-                "{} = ${}::text::{}",
-                quote_ident(&column.name),
-                params.len(),
-                column.type_name
-            ));
-            condition_display.push(format!(
-                "{} = {}",
-                quote_ident(&column.name),
-                literal(Some(&original), &column.type_name)
-            ));
-        }
+        let (condition, condition_display) = key_condition(target, values, row, &mut params)?;
 
         let returning: Vec<String> = columns
             .iter()
@@ -202,19 +179,128 @@ pub fn build_updates(
             sql: format!(
                 "UPDATE {table} SET {} WHERE {} RETURNING {}",
                 set.join(", "),
-                condition.join(" AND "),
+                condition,
                 returning.join(", ")
             ),
             display: format!(
                 "UPDATE {table}\nSET {}\nWHERE {};",
                 set_display.join(", "),
-                condition_display.join(" AND ")
+                condition_display
             ),
             params,
             columns,
         });
     }
     Ok(updates)
+}
+
+/// `WHERE` que identifica a linha pela chave primária, com os valores em
+/// parâmetros acrescentados a `params`, e o texto equivalente com literais.
+fn key_condition(
+    target: &EditTarget,
+    values: &[Value],
+    row: usize,
+    params: &mut Vec<Option<String>>,
+) -> Result<(String, String), String> {
+    let mut condition = Vec::new();
+    let mut condition_display = Vec::new();
+    for &col in &target.key {
+        let column = target.columns[col]
+            .as_ref()
+            .expect("coluna da chave mapeada");
+        let original = key_text(&values[col]).ok_or_else(|| {
+            format!(
+                "o valor da chave {} na linha {} não pode ser usado",
+                column.name,
+                row + 1
+            )
+        })?;
+        params.push(Some(original.clone()));
+        condition.push(format!(
+            "{} = ${}::text::{}",
+            quote_ident(&column.name),
+            params.len(),
+            column.type_name
+        ));
+        condition_display.push(format!(
+            "{} = {}",
+            quote_ident(&column.name),
+            literal(Some(&original), &column.type_name)
+        ));
+    }
+    Ok((condition.join(" AND "), condition_display.join(" AND ")))
+}
+
+/// Um `DELETE` de uma linha, identificada pela chave primária.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RowDelete {
+    pub row: usize,
+    /// `DELETE ... RETURNING` das colunas da chave: deve devolver 1 linha.
+    pub sql: String,
+    pub params: Vec<Option<String>>,
+    /// SQL equivalente com literais, para exibir.
+    pub display: String,
+    /// Chave da linha para exibição (`id=7, ano=2024`).
+    pub key: String,
+}
+
+pub fn build_deletes(
+    target: &EditTarget,
+    result: &ResultSet,
+    rows: &BTreeSet<usize>,
+) -> Result<Vec<RowDelete>, String> {
+    let table = format!(
+        "{}.{}",
+        quote_ident(&target.schema),
+        quote_ident(&target.table)
+    );
+    let returning: Vec<String> = target
+        .key
+        .iter()
+        .map(|c| quote_ident(&target.columns[*c].as_ref().expect("coluna mapeada").name))
+        .collect();
+    let mut deletes = Vec::new();
+    for &row in rows {
+        let values = result.rows.get(row).ok_or("linha inexistente")?;
+        let mut params = Vec::new();
+        let (condition, condition_display) = key_condition(target, values, row, &mut params)?;
+        let key: Vec<String> = target
+            .key
+            .iter()
+            .map(|&c| format!("{}={}", result.columns[c].name, values[c].display()))
+            .collect();
+        deletes.push(RowDelete {
+            row,
+            sql: format!(
+                "DELETE FROM {table} WHERE {condition} RETURNING {}",
+                returning.join(", ")
+            ),
+            display: format!("DELETE FROM {table}\nWHERE {condition_display};"),
+            params,
+            key: key.join(", "),
+        });
+    }
+    Ok(deletes)
+}
+
+/// Novo índice de uma linha depois de remover `deleted` do resultado
+/// (`None` se ela própria foi removida).
+pub fn index_after_delete(row: usize, deleted: &BTreeSet<usize>) -> Option<usize> {
+    if deleted.contains(&row) {
+        return None;
+    }
+    Some(row - deleted.range(..row).count())
+}
+
+/// Alterações pendentes reindexadas depois de remover linhas; as das linhas
+/// removidas são descartadas.
+pub fn pending_after_delete(pending: &Pending, deleted: &BTreeSet<usize>) -> Pending {
+    pending
+        .iter()
+        .filter_map(|(&(row, col), value)| {
+            index_after_delete(row, deleted).map(|r| ((r, col), value.clone()))
+        })
+        .collect()
 }
 
 /// Texto do valor original de uma chave, na sintaxe de entrada do PostgreSQL.
@@ -411,5 +497,59 @@ mod tests {
         let mut pending = Pending::new();
         pending.insert((0, 1), Some("y".into()));
         assert!(build_updates(&t, &rs, &pending).is_err());
+    }
+
+    #[test]
+    fn builds_parameterized_deletes() {
+        let rs = result(
+            vec![
+                column("nome", Some(10), Some(2)),
+                column("id", Some(10), Some(1)),
+            ],
+            vec![
+                vec![Value::Text("Ana".into()), Value::Int(7)],
+                vec![Value::Text("Bia".into()), Value::Int(8)],
+                vec![Value::Text("Caio".into()), Value::Int(9)],
+            ],
+        );
+        let t = edit_target(&rs, &catalog()).unwrap();
+        let rows = BTreeSet::from([0, 2]);
+        let dels = build_deletes(&t, &rs, &rows).unwrap();
+        assert_eq!(dels.len(), 2);
+        assert_eq!(
+            dels[0].sql,
+            "DELETE FROM public.clientes WHERE id = $1::text::integer RETURNING id"
+        );
+        assert_eq!(dels[0].params, vec![Some("7".into())]);
+        assert_eq!(
+            dels[1].display,
+            "DELETE FROM public.clientes\nWHERE id = '9'::integer;"
+        );
+        assert_eq!(dels[1].key, "id=9");
+        assert_eq!(dels[1].row, 2);
+
+        let null_key = result(
+            vec![column("id", Some(10), Some(1))],
+            vec![vec![Value::Null]],
+        );
+        let t = edit_target(&null_key, &catalog()).unwrap();
+        assert!(build_deletes(&t, &null_key, &BTreeSet::from([0])).is_err());
+    }
+
+    #[test]
+    fn reindexes_pending_after_delete() {
+        let deleted = BTreeSet::from([1, 3]);
+        assert_eq!(index_after_delete(0, &deleted), Some(0));
+        assert_eq!(index_after_delete(1, &deleted), None);
+        assert_eq!(index_after_delete(2, &deleted), Some(1));
+        assert_eq!(index_after_delete(5, &deleted), Some(3));
+        let mut pending = Pending::new();
+        pending.insert((0, 1), Some("a".into()));
+        pending.insert((1, 1), Some("b".into()));
+        pending.insert((4, 0), None);
+        let after = pending_after_delete(&pending, &deleted);
+        assert_eq!(after.len(), 2);
+        assert_eq!(after[&(0, 1)], Some("a".into()));
+        assert_eq!(after[&(2, 0)], None);
     }
 }

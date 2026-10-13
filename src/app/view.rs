@@ -583,6 +583,111 @@ impl App {
                 .spacing(10)
                 .into()
             }
+            Modal::DeleteRows {
+                table,
+                keys,
+                sql,
+                dropped_edits,
+                error,
+                running,
+                needs_transaction,
+                in_transaction,
+                ..
+            } => {
+                const SHOWN: usize = 10;
+                let count = keys.len();
+                let mut listed = keys
+                    .iter()
+                    .take(SHOWN)
+                    .map(|k| format!("• {k}"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if count > SHOWN {
+                    listed.push_str(&format!("\n… e mais {}", count - SHOWN));
+                }
+                let mut col = column![
+                    text(format!(
+                        "Excluir {count} {}?",
+                        if count == 1 { "linha" } else { "linhas" }
+                    ))
+                    .size(18)
+                    .font(BOLD),
+                    text(format!(
+                        "{count} {} da tabela {table} {}, identificada{} pela chave primária:",
+                        if count == 1 { "linha" } else { "linhas" },
+                        if count == 1 { "será removida" } else { "serão removidas" },
+                        if count == 1 { "" } else { "s" },
+                    ))
+                    .size(13),
+                    container(text(listed).font(Font::MONOSPACE).size(12))
+                        .padding(8)
+                        .width(Length::Fill)
+                        .style(container::bordered_box),
+                    text("SQL que será executado (valores enviados como parâmetros):")
+                        .size(13)
+                        .style(muted),
+                    container(scrollable(text(sql).font(Font::MONOSPACE).size(12)).height(Length::Shrink))
+                        .padding(8)
+                        .max_height(200)
+                        .width(Length::Fill)
+                        .style(container::bordered_box),
+                ]
+                .spacing(10);
+                col = col.push(
+                    text(if *in_transaction {
+                        "A exclusão entra na transação ativa: só é gravada ao Confirmar (COMMIT)."
+                    } else {
+                        "A exclusão é gravada imediatamente e não pode ser desfeita."
+                    })
+                    .size(13)
+                    .style(if *in_transaction { muted } else { danger_text }),
+                );
+                if *dropped_edits > 0 {
+                    col = col.push(
+                        text(format!(
+                            "{dropped_edits} alteração(ões) pendente(s) nessas linhas será(ão) descartada(s)."
+                        ))
+                        .size(13)
+                        .style(muted),
+                    );
+                }
+                if *needs_transaction {
+                    let begin = self.active_ws().map(|w| Message::TxBegin(w.desc.id.clone()));
+                    col = col.push(
+                        row![
+                            text("Este workspace exige transação para excluir linhas.")
+                                .size(13)
+                                .style(danger_text),
+                            space::horizontal(),
+                            button(text("Iniciar transação").size(13)).on_press_maybe(begin),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    );
+                }
+                if let Some(e) = error {
+                    col = col.push(text(e).size(13).style(danger_text));
+                }
+                col.push(
+                    row![
+                        space::horizontal(),
+                        button(text("Cancelar"))
+                            .on_press(Message::CloseModal)
+                            .style(button::secondary),
+                        button(text(if *running {
+                            "Excluindo…".to_string()
+                        } else {
+                            format!("Excluir {count} {}", if count == 1 { "linha" } else { "linhas" })
+                        }))
+                        .on_press_maybe(
+                            (!*running && !*needs_transaction).then_some(Message::DeleteRowsConfirm),
+                        )
+                        .style(button::danger),
+                    ]
+                    .spacing(8),
+                )
+                .into()
+            }
             Modal::GridSave {
                 sql,
                 error,
@@ -907,6 +1012,17 @@ impl App {
                     col = col.push(row![
                         text(s.keys).font(Font::MONOSPACE).size(13).width(170),
                         text(s.description).size(13)
+                    ]);
+                }
+                // Teclas da grade não passam pelo mapa central: o editor SQL as usa.
+                for (keys, description) in [
+                    ("Del", "Excluir as linhas selecionadas (grade focada)"),
+                    ("Setas", "Mover a seleção na grade (grade focada)"),
+                    ("Shift+↑/↓", "Estender a seleção de linhas"),
+                ] {
+                    col = col.push(row![
+                        text(keys).font(Font::MONOSPACE).size(13).width(170),
+                        text(description).size(13)
                     ]);
                 }
                 col.push(text("Atalhos da aplicação têm prioridade sobre o editor quando ele está focado.").size(12).style(muted))
@@ -2188,6 +2304,8 @@ fn results_panel<'a>(ws: &'a Workspace, tab: &'a Tab) -> Element<'a, Message> {
                 .as_ref()
                 .map(|e| (e.row, e.col, e.text.as_str(), e.input_id.clone())),
             on_double_click: Message::StartEdit,
+            selected_rows: &tab.row_selection.rows,
+            on_row_select: Message::SelectRow,
             on_edit_input: Message::EditInput,
             on_edit_submit: Message::CommitEdit,
         }),
@@ -2202,6 +2320,22 @@ fn results_panel<'a>(ws: &'a Workspace, tab: &'a Tab) -> Element<'a, Message> {
         )
         .into(),
     };
+    // Borda indica que a grade tem o foco do teclado (setas e Del).
+    let focused = tab.grid_focused;
+    let grid = container(grid)
+        .padding(1)
+        .style(move |theme: &Theme| container::Style {
+            border: iced::Border {
+                color: if focused {
+                    theme.extended_palette().primary.base.color
+                } else {
+                    Color::TRANSPARENT
+                },
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..container::Style::default()
+        });
     col.push(grid).height(Length::Fill).into()
 }
 
@@ -2288,6 +2422,19 @@ fn edit_bar(tab: &Tab) -> Option<Element<'_, Message>> {
                                 .style(button::secondary),
                         );
                 }
+            }
+            let selected_rows = tab.row_selection.rows.len();
+            if selected_rows > 0 {
+                bar = bar
+                    .push(text(format!("{selected_rows} linha(s) selecionada(s)")).size(12))
+                    .push(hint(
+                        button(text("Excluir linhas").size(12))
+                            .on_press(Message::DeleteRowsDialog)
+                            .padding([2, 8])
+                            .style(button::danger),
+                        "Excluir as linhas selecionadas (pede confirmação)",
+                        "Del",
+                    ));
             }
             if !tab.pending.is_empty() {
                 bar = bar

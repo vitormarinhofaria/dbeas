@@ -15,6 +15,8 @@ use iced::widget::{
 };
 use iced::{Color, Element, Font, Length, Theme};
 
+use std::collections::BTreeSet;
+
 use crate::data_edit::Pending;
 use crate::query::{ResultSet, Value};
 
@@ -30,8 +32,182 @@ const MAX_CELL_CHARS: usize = 200;
 /// Estado de rolagem da grade (transitório, não persistido).
 #[derive(Debug, Clone, Default)]
 pub struct ScrollState {
+    pub offset_x: f32,
     pub offset_y: f32,
+    pub viewport_width: f32,
     pub viewport_height: f32,
+}
+
+/// Linhas selecionadas pela coluna de números (transitório, não persistido).
+#[derive(Debug, Clone, Default)]
+pub struct RowSelection {
+    pub rows: BTreeSet<usize>,
+    /// Última linha clicada sem Shift: origem do intervalo com Shift.
+    pub anchor: Option<usize>,
+    /// Linha atual (último clique ou seta), ponto de partida das setas.
+    pub cursor: Option<usize>,
+}
+
+impl RowSelection {
+    /// Clique no número da linha: sozinho seleciona só ela; com Ctrl alterna;
+    /// com Shift seleciona o intervalo a partir da âncora (somando à seleção
+    /// se Ctrl também estiver pressionado).
+    pub fn click(&mut self, row: usize, ctrl: bool, shift: bool) {
+        match (shift, self.anchor) {
+            (true, Some(anchor)) => {
+                if !ctrl {
+                    self.rows.clear();
+                }
+                self.rows.extend(anchor.min(row)..=anchor.max(row));
+                self.cursor = Some(row);
+            }
+            _ if ctrl => {
+                if !self.rows.remove(&row) {
+                    self.rows.insert(row);
+                }
+                self.anchor = Some(row);
+                self.cursor = Some(row);
+            }
+            _ => {
+                self.rows.clear();
+                self.rows.insert(row);
+                self.anchor = Some(row);
+                self.cursor = Some(row);
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.rows.clear();
+        self.anchor = None;
+        self.cursor = None;
+    }
+}
+
+/// Tecla de navegação na grade focada.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arrow {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+/// Move a seleção da grade com as setas. Com uma célula selecionada, move a
+/// célula (entre as colunas visíveis, na ordem exibida). Com linhas
+/// selecionadas, ↑/↓ movem a linha e ←/→ passam a selecionar a célula da
+/// primeira coluna. Shift+↑/↓ estende a seleção de linhas a partir da âncora.
+/// Sem seleção, começa pela primeira célula. Devolve a célula a mostrar.
+pub fn navigate(
+    selected: &mut Option<(usize, usize)>,
+    rows: &mut RowSelection,
+    order: &[usize],
+    row_count: usize,
+    arrow: Arrow,
+    shift: bool,
+) -> Option<(usize, usize)> {
+    let (&first, &last) = (order.first()?, order.last()?);
+    if row_count == 0 {
+        return None;
+    }
+    let (row, col) = match (*selected, rows.cursor) {
+        (Some(cell), _) => cell,
+        (None, Some(row)) => (row, first),
+        (None, None) => {
+            *selected = Some((0, first));
+            rows.clear();
+            return *selected;
+        }
+    };
+    let row = row.min(row_count - 1);
+    let vertical = |row: usize| match arrow {
+        Arrow::Up => row.saturating_sub(1),
+        Arrow::Down => (row + 1).min(row_count - 1),
+        _ => row,
+    };
+    let rows_mode = selected.is_none();
+    match arrow {
+        Arrow::Up | Arrow::Down if shift => {
+            let target = vertical(row);
+            let anchor = rows.anchor.filter(|_| rows_mode).unwrap_or(row);
+            rows.rows = (anchor.min(target)..=anchor.max(target)).collect();
+            rows.anchor = Some(anchor);
+            rows.cursor = Some(target);
+            *selected = None;
+            Some((target, col))
+        }
+        Arrow::Up | Arrow::Down if rows_mode => {
+            let target = vertical(row);
+            rows.click(target, false, false);
+            Some((target, col))
+        }
+        Arrow::Up | Arrow::Down => {
+            *selected = Some((vertical(row), col));
+            *selected
+        }
+        Arrow::Left | Arrow::Right => {
+            let position = order.iter().position(|c| *c == col).unwrap_or(0);
+            let col = if rows_mode {
+                first
+            } else if arrow == Arrow::Left {
+                order[position.saturating_sub(1)]
+            } else {
+                order.get(position + 1).copied().unwrap_or(last)
+            };
+            rows.clear();
+            *selected = Some((row, col));
+            *selected
+        }
+    }
+}
+
+/// Novo deslocamento para que o trecho `[start, start + len)` fique visível
+/// numa área de tamanho `view` rolada até `offset`; `None` se já estiver.
+pub fn reveal(start: f32, len: f32, offset: f32, view: f32) -> Option<f32> {
+    if view <= 0.0 {
+        return None;
+    }
+    if start < offset {
+        Some(start)
+    } else if start + len > offset + view {
+        Some((start + len - view).max(0.0))
+    } else {
+        None
+    }
+}
+
+/// Deslocamento (x, y) que mostra a célula, se ela estiver fora da área visível.
+pub fn reveal_cell(
+    scroll: &ScrollState,
+    widths: &[f32],
+    order: &[usize],
+    (row, col): (usize, usize),
+) -> (Option<f32>, Option<f32>) {
+    let y = reveal(
+        row as f32 * ROW_HEIGHT,
+        ROW_HEIGHT,
+        scroll.offset_y,
+        scroll.viewport_height,
+    );
+    let before: f32 = order
+        .iter()
+        .take_while(|c| **c != col)
+        .map(|c| widths.get(*c).copied().unwrap_or(0.0))
+        .sum();
+    let width = widths.get(col).copied().unwrap_or(0.0);
+    // A coluna de números rola junto; ao voltar para a primeira coluna, mostra-a.
+    let start = if before == 0.0 {
+        0.0
+    } else {
+        ROW_NUMBER_WIDTH + before
+    };
+    let x = reveal(
+        start,
+        ROW_NUMBER_WIDTH + before + width - start,
+        scroll.offset_x,
+        scroll.viewport_width,
+    );
+    (x, y)
 }
 
 /// Largura de cada coluna, estimada pelo cabeçalho e por uma amostra de linhas.
@@ -101,6 +277,9 @@ pub struct GridView<'a, M> {
     /// Célula em edição: linha, coluna, texto e id do campo.
     pub editing: Option<(usize, usize, &'a str, Id)>,
     pub on_double_click: fn(usize, usize) -> M,
+    /// Linhas selecionadas e clique no número da linha.
+    pub selected_rows: &'a BTreeSet<usize>,
+    pub on_row_select: fn(usize) -> M,
     pub on_edit_input: fn(String) -> M,
     pub on_edit_submit: M,
 }
@@ -228,16 +407,30 @@ fn data_row<'a, M: Clone + 'a>(g: &GridView<'a, M>, index: usize) -> Element<'a,
     } else {
         (index + 1).to_string()
     };
+    let row_selected = g.selected_rows.contains(&index);
+    let number = container(text(label).size(12).font(Font::MONOSPACE).style(
+        move |theme: &Theme| {
+            if row_selected {
+                text::Style {
+                    color: Some(theme.extended_palette().primary.strong.text),
+                }
+            } else {
+                muted(theme)
+            }
+        },
+    ))
+    .width(ROW_NUMBER_WIDTH)
+    .height(ROW_HEIGHT)
+    .padding([3, 6])
+    .style(move |theme: &Theme| row_number_style(theme, row_selected));
     let mut r = Row::new().height(ROW_HEIGHT).push(
-        container(text(label).size(12).style(muted).font(Font::MONOSPACE))
-            .width(ROW_NUMBER_WIDTH)
-            .height(ROW_HEIGHT)
-            .padding([3, 6])
-            .style(row_number_style),
+        mouse_area(number)
+            .on_press((g.on_row_select)(index))
+            .interaction(iced::mouse::Interaction::Pointer),
     );
     for &col in g.order {
         let width = &g.widths[col];
-        let selected = g.selected == Some((index, col));
+        let selected = g.selected == Some((index, col)) || row_selected;
         if let Some((_, _, current, id)) = g.editing.as_ref().filter(|e| e.0 == index && e.1 == col)
         {
             let input = text_input("", current)
@@ -304,10 +497,17 @@ fn muted(theme: &Theme) -> text::Style {
     }
 }
 
-fn row_number_style(theme: &Theme) -> container::Style {
+fn row_number_style(theme: &Theme, selected: bool) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
-        background: Some(p.background.weaker.color.into()),
+        background: Some(
+            if selected {
+                p.primary.strong.color
+            } else {
+                p.background.weaker.color
+            }
+            .into(),
+        ),
         ..container::Style::default()
     }
 }
@@ -349,4 +549,90 @@ pub fn near_end(viewport: &Viewport) -> bool {
     let visible = viewport.bounds().height;
     let content = viewport.content_bounds().height;
     content - (offset + visible) < ROW_HEIGHT * 20.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rows(s: &RowSelection) -> Vec<usize> {
+        s.rows.iter().copied().collect()
+    }
+
+    #[test]
+    fn row_selection_follows_ctrl_and_shift() {
+        let mut s = RowSelection::default();
+        s.click(3, false, false);
+        assert_eq!(rows(&s), vec![3]);
+        s.click(5, true, false);
+        assert_eq!(rows(&s), vec![3, 5]);
+        s.click(3, true, false);
+        assert_eq!(rows(&s), vec![5]);
+        // Âncora na 3 (último Ctrl+clique): Shift seleciona 1..=3.
+        s.click(1, false, true);
+        assert_eq!(rows(&s), vec![1, 2, 3]);
+        // Ctrl+Shift soma o intervalo à seleção.
+        s.click(6, true, true);
+        assert_eq!(rows(&s), vec![1, 2, 3, 4, 5, 6]);
+        s.click(8, false, false);
+        assert_eq!(rows(&s), vec![8]);
+        s.clear();
+        // Shift sem âncora seleciona só a linha.
+        s.click(2, false, true);
+        assert_eq!(rows(&s), vec![2]);
+    }
+
+    #[test]
+    fn arrows_move_cells_and_rows() {
+        let order = [2, 0, 1];
+        let mut cell = None;
+        let mut sel = RowSelection::default();
+        let go = |cell: &mut Option<(usize, usize)>, sel: &mut RowSelection, a, shift| {
+            navigate(cell, sel, &order, 5, a, shift)
+        };
+        // Sem seleção: primeira célula exibida.
+        assert_eq!(go(&mut cell, &mut sel, Arrow::Down, false), Some((0, 2)));
+        assert_eq!(go(&mut cell, &mut sel, Arrow::Right, false), Some((0, 0)));
+        assert_eq!(go(&mut cell, &mut sel, Arrow::Right, false), Some((0, 1)));
+        assert_eq!(go(&mut cell, &mut sel, Arrow::Right, false), Some((0, 1)));
+        assert_eq!(go(&mut cell, &mut sel, Arrow::Up, false), Some((0, 1)));
+        assert_eq!(go(&mut cell, &mut sel, Arrow::Down, false), Some((1, 1)));
+        // Shift+↓ passa a selecionar linhas a partir da linha da célula.
+        go(&mut cell, &mut sel, Arrow::Down, true);
+        go(&mut cell, &mut sel, Arrow::Down, true);
+        assert_eq!(cell, None);
+        assert_eq!(rows(&sel), vec![1, 2, 3]);
+        go(&mut cell, &mut sel, Arrow::Up, true);
+        assert_eq!(rows(&sel), vec![1, 2]);
+        // ↓ sem Shift: só a próxima linha.
+        go(&mut cell, &mut sel, Arrow::Down, false);
+        assert_eq!(rows(&sel), vec![3]);
+        // ← volta para a célula da primeira coluna, na linha atual.
+        assert_eq!(go(&mut cell, &mut sel, Arrow::Left, false), Some((3, 2)));
+        assert!(sel.rows.is_empty());
+        // Fim do resultado.
+        cell = Some((4, 0));
+        assert_eq!(go(&mut cell, &mut sel, Arrow::Down, false), Some((4, 0)));
+    }
+
+    #[test]
+    fn reveal_keeps_cell_visible() {
+        assert_eq!(reveal(100.0, 24.0, 0.0, 200.0), None);
+        assert_eq!(reveal(300.0, 24.0, 0.0, 200.0), Some(124.0));
+        assert_eq!(reveal(48.0, 24.0, 100.0, 200.0), Some(48.0));
+        let scroll = ScrollState {
+            offset_x: 0.0,
+            offset_y: 0.0,
+            viewport_width: 300.0,
+            viewport_height: 240.0,
+        };
+        let widths = [100.0, 200.0, 150.0];
+        let order = [0, 1, 2];
+        // Coluna 2 termina em 56 + 300 + 150 = 506: rola até 506 - 300.
+        assert_eq!(
+            reveal_cell(&scroll, &widths, &order, (20, 2)),
+            (Some(206.0), Some(24.0 * 21.0 - 240.0))
+        );
+        assert_eq!(reveal_cell(&scroll, &widths, &order, (0, 0)), (None, None));
+    }
 }

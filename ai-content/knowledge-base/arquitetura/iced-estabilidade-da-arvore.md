@@ -17,6 +17,17 @@ digitando, nem navegar ou aceitar sugestões. A raiz da janela tinha o mesmo
 problema ao abrir modais e o Ctrl+P (perdia foco e rolagens). Corrigido em
 `src/sql_editor.rs` e `src/app/view.rs`.
 
+## Clique capturado não tira o foco de widgets abaixo
+
+Um `stack` para de repassar o evento às camadas de baixo assim que
+`shell.is_event_captured()` (`iced_widget::stack::update`), mesmo que quem
+capturou esteja fora dele. A `column` repassa a todos, mas o shell é
+compartilhado: na aba, a grade vem **antes** do editor, então o clique numa célula
+(capturado pelo `mouse_area`) chega ao `stack` do editor SQL já capturado, e o
+`text_editor` nunca vê o clique de fora que o desfocaria. Bug de 2026-10-13: Del
+na grade apagava texto no editor. Solução: ao clicar na grade, tirar o foco com
+`operate(focusable::unfocus())` (`App::focus_grid`).
+
 **Teste de interface:** o ambiente é KDE/Wayland. Teclas sintéticas via XTEST
 (app rodando com `env -u WAYLAND_DISPLAY WINIT_UNIX_BACKEND=x11`) disparam o
 diálogo de permissão "Controle remoto" do KDE — precisa de aprovação do usuário.

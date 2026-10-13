@@ -346,6 +346,80 @@ async fn grid_edits_are_atomic_and_join_the_transaction() {
 }
 
 #[tokio::test]
+async fn selected_rows_are_deleted_by_primary_key() {
+    use connection::{EditStatement, TxCommand, TxState};
+    use dbeas::data_edit;
+    use std::collections::BTreeSet;
+    let Some(cfg) = config(false) else { return };
+    let conn = connection::connect(cfg).await.unwrap();
+    let setup = "drop table if exists dbeas_del; \
+                 create table dbeas_del (a int, b text, nome text, primary key (a, b)); \
+                 insert into dbeas_del values (1, 'x', 'um'), (2, 'y', 'dois'), (3, 'z', 'tres')";
+    conn.execute(setup.into(), all(setup)).await.unwrap();
+    let catalog = conn.catalog().await.unwrap();
+    let select = |conn| async move {
+        run(conn, "select nome, b, a from dbeas_del order by a")
+            .await
+            .unwrap()
+            .result
+            .unwrap()
+    };
+    let statements = |rs: &dbeas::query::ResultSet, rows: &[usize]| {
+        let target = data_edit::edit_target(rs, &catalog).unwrap();
+        data_edit::build_deletes(&target, rs, &rows.iter().copied().collect::<BTreeSet<_>>())
+            .unwrap()
+            .into_iter()
+            .map(|d| EditStatement {
+                sql: d.sql,
+                params: d.params,
+                label: d.key,
+            })
+            .collect::<Vec<_>>()
+    };
+
+    // Exclui a 1ª e a 3ª linhas pela chave composta, fora de transação.
+    let rs = select(&conn).await;
+    conn.apply_edits(statements(&rs, &[0, 2])).await.unwrap();
+    assert_eq!(conn.tx_state(), TxState::Idle);
+    let rs = select(&conn).await;
+    assert_eq!(
+        rs.rows,
+        vec![vec![
+            Value::Text("dois".into()),
+            Value::Text("y".into()),
+            Value::Int(2)
+        ]]
+    );
+
+    // Linha já removida por outra sessão: o lote inteiro é desfeito.
+    let stale = statements(&rs, &[0]);
+    run(&conn, "insert into dbeas_del values (4, 'w', 'quatro')")
+        .await
+        .unwrap();
+    let rs = select(&conn).await;
+    let mut batch = statements(&rs, &[1]);
+    run(&conn, "delete from dbeas_del where a = 2")
+        .await
+        .unwrap();
+    batch.extend(stale);
+    let err = conn.apply_edits(batch).await.unwrap_err();
+    assert!(
+        err.message.contains("não foi encontrada"),
+        "{}",
+        err.message
+    );
+    assert_eq!(select(&conn).await.rows.len(), 1);
+
+    // Na transação: só some de vez com o COMMIT; ROLLBACK traz de volta.
+    conn.transaction(TxCommand::Begin).await.unwrap();
+    let rs = select(&conn).await;
+    conn.apply_edits(statements(&rs, &[0])).await.unwrap();
+    assert!(select(&conn).await.rows.is_empty());
+    conn.transaction(TxCommand::Rollback).await.unwrap();
+    assert_eq!(select(&conn).await.rows.len(), 1);
+}
+
+#[tokio::test]
 async fn probe_measures_latency_and_reads_server_info() {
     let Some(cfg) = config(true) else { return };
     let user = cfg.user.clone();
