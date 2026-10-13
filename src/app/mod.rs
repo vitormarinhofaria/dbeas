@@ -230,6 +230,10 @@ pub enum Message {
     SettingsReadOnly(bool),
     SettingsRequireTransaction(bool),
     SettingsTogglePassword,
+    /// Abre o seletor de diretório do `sqlFilesDir`, no diretório do json.
+    SettingsBrowseSqlDir,
+    /// Diretório escolhido para a aba indicada.
+    SettingsPickedSqlDir(usize, Option<PathBuf>),
     SettingsSave,
     SettingsTestConnection,
     SettingsTested(u64, Result<connection::Probe, String>),
@@ -723,10 +727,7 @@ impl App {
                         // O resultado valia para a configuração anterior.
                         *test = None;
                     }
-                    if matches!(
-                        message,
-                        Message::SettingsTab(_) | Message::SettingsAddEntry
-                    ) {
+                    if matches!(message, Message::SettingsTab(_) | Message::SettingsAddEntry) {
                         // A senha de outra entrada começa oculta.
                         *show_password = false;
                     }
@@ -747,6 +748,42 @@ impl App {
                         Message::SettingsAddEntry => doc.add_entry(),
                         Message::SettingsRemoveEntry(tab) => doc.remove_new_entry(tab),
                         _ => {}
+                    }
+                }
+                Task::none()
+            }
+            Message::SettingsBrowseSqlDir => {
+                let Some(Modal::EditWorkspace { doc, .. }) = &self.modal else {
+                    return Task::none();
+                };
+                let tab = doc.active;
+                let dir = doc.base_dir().to_path_buf();
+                Task::perform(
+                    async move {
+                        rfd::AsyncFileDialog::new()
+                            .set_title("Selecione o diretório dos arquivos SQL")
+                            .set_directory(dir)
+                            .pick_folder()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    move |picked| Message::SettingsPickedSqlDir(tab, picked),
+                )
+            }
+            Message::SettingsPickedSqlDir(tab, picked) => {
+                if let (
+                    Some(Modal::EditWorkspace {
+                        doc, error, test, ..
+                    }),
+                    Some(picked),
+                ) = (&mut self.modal, picked)
+                {
+                    let value = doc.dir_value(&picked);
+                    // A aba pode ter mudado enquanto o seletor estava aberto.
+                    if let Some(form) = doc.forms.get_mut(tab) {
+                        form.set(config_editor::Field::SqlFilesDir, value);
+                        *error = None;
+                        *test = None;
                     }
                 }
                 Task::none()
@@ -1794,8 +1831,14 @@ impl App {
         }
         let mut message = match added {
             0 => format!("Configurações de {} salvas.", file.display()),
-            1 => format!("Configurações salvas; 1 workspace adicionado a {}.", file.display()),
-            n => format!("Configurações salvas; {n} workspaces adicionados a {}.", file.display()),
+            1 => format!(
+                "Configurações salvas; 1 workspace adicionado a {}.",
+                file.display()
+            ),
+            n => format!(
+                "Configurações salvas; {n} workspaces adicionados a {}.",
+                file.display()
+            ),
         };
         if !reconnect.is_empty() {
             message.push_str(&format!(

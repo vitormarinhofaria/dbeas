@@ -29,6 +29,12 @@ testada); tela em `settings_view`/`settings_tabs` (`src/app/view.rs`); fluxo em
   **`dbPass` nunca mostra o valor:** `********` se resolver para algo não vazio,
   nada se resolver para vazio. Senha literal fica oculta no campo (botão
   Mostrar); referência `${env.X}` fica legível.
+- `sqlFilesDir` tem o botão "Escolher…" (pedido do usuário em 2026-10-13):
+  seletor de diretório (`rfd::pick_folder`) que abre no diretório do
+  `dbeas.json` editado. O escolhido vira `./sub` (ou `.`) se estiver abaixo do
+  diretório do json, senão caminho absoluto (`Document::dir_value`, compara
+  caminhos canonicalizados). O resultado vai para a aba que estava ativa ao
+  abrir o seletor. O campo continua editável como texto.
 - Validação ao vivo com o mesmo `config::resolve_entry` da carga. Bloqueiam
   gravar: `name`/`dbName` vazios, porta literal inválida, nome de variável
   inválido ou repetido em `env`. Os demais erros (variável ausente, `envFile`

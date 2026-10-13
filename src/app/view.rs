@@ -1002,7 +1002,16 @@ fn settings_view<'a>(
         settings_field(
             form,
             Field::SqlFilesDir,
-            input(Field::SqlFilesDir, "ex.: ./sql").into()
+            row![
+                input(Field::SqlFilesDir, "ex.: ./sql"),
+                button(text("Escolher…").size(12))
+                    .on_press(Message::SettingsBrowseSqlDir)
+                    .padding([2, 8])
+                    .style(button::secondary),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .into()
         ),
     ]
     .spacing(8)
@@ -1037,7 +1046,8 @@ fn settings_view<'a>(
     // Altura das mensagens abaixo do formulário, descontada da área rolável
     // para que o resumo do teste e os botões caibam na janela.
     let other_blocking = blocking.as_ref().filter(|(tab, _)| *tab != doc.active);
-    let below = 22.0 * (usize::from(other_blocking.is_some()) + usize::from(error.is_some())) as f32
+    let below = 22.0
+        * (usize::from(other_blocking.is_some()) + usize::from(error.is_some())) as f32
         + match test {
             None => 0.0,
             Some(Some(Ok(probe))) if probe.server.is_ok() => 150.0,
@@ -1083,12 +1093,15 @@ fn settings_view<'a>(
     let testing = matches!(test, Some(None));
     col.push(
         row![
-            button(text(if testing { "Testando…" } else { "Testar conexão" }))
-                .on_press_maybe(
-                    (!testing && form.validation().is_ok())
-                        .then_some(Message::SettingsTestConnection)
-                )
-                .style(button::secondary),
+            button(text(if testing {
+                "Testando…"
+            } else {
+                "Testar conexão"
+            }))
+            .on_press_maybe(
+                (!testing && form.validation().is_ok()).then_some(Message::SettingsTestConnection)
+            )
+            .style(button::secondary),
             space::horizontal(),
             button(text("Cancelar"))
                 .on_press(Message::CloseModal)
@@ -1187,7 +1200,11 @@ fn probe_summary(probe: &Probe) -> Element<'_, Message> {
                     format!(
                         "PostgreSQL {} · {} · no ar há {}",
                         s.version,
-                        if s.replica { "réplica (somente leitura)" } else { "primário" },
+                        if s.replica {
+                            "réplica (somente leitura)"
+                        } else {
+                            "primário"
+                        },
                         connection::format_uptime(s.uptime)
                     ),
                 ))
@@ -1198,7 +1215,11 @@ fn probe_summary(probe: &Probe) -> Element<'_, Message> {
                         s.user,
                         s.database,
                         s.database_size,
-                        if s.read_only { " · transações somente leitura" } else { "" }
+                        if s.read_only {
+                            " · transações somente leitura"
+                        } else {
+                            ""
+                        }
                     ),
                 ))
                 .push(line(

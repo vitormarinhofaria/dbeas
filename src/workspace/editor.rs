@@ -195,6 +195,24 @@ impl Document {
         }
     }
 
+    /// Diretório do `dbeas.json`, base dos caminhos relativos.
+    pub fn base_dir(&self) -> &Path {
+        &self.base_dir
+    }
+
+    /// Texto a gravar para um diretório escolhido no seletor: relativo ao
+    /// diretório do `dbeas.json` (`./sql`, ou `.` para ele mesmo) quando
+    /// estiver abaixo dele, absoluto caso contrário.
+    pub fn dir_value(&self, picked: &Path) -> String {
+        let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let (base, picked) = (canon(&self.base_dir), canon(picked));
+        match picked.strip_prefix(&base) {
+            Ok(rel) if rel.as_os_str().is_empty() => ".".into(),
+            Ok(rel) => format!("./{}", rel.display()),
+            Err(_) => picked.display().to_string(),
+        }
+    }
+
     /// Acrescenta uma entrada vazia (gravada ao fim do array) e a exibe.
     pub fn add_entry(&mut self) {
         self.forms.push(Form::new(
@@ -882,8 +900,7 @@ mod tests {
         assert!(doc.blocking().is_none());
         doc.save().unwrap();
 
-        let value: Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let value: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
             value,
             serde_json::json!([
@@ -892,6 +909,19 @@ mod tests {
                 {"name":"b","dbPort":5433,"dbName":"y"}
             ])
         );
+    }
+
+    #[test]
+    fn picked_dir_is_relative_to_the_json_when_below_it() {
+        let tmp = std::env::temp_dir().join(format!("dbeas-dir-value-{}", std::process::id()));
+        std::fs::create_dir_all(tmp.join("ws/sql/sub")).unwrap();
+        let file = tmp.join("ws/dbeas.json");
+        let doc = Document::from_text("[]".into(), &file, 0, vec![]).unwrap();
+        assert_eq!(doc.dir_value(&tmp.join("ws")), ".");
+        assert_eq!(doc.dir_value(&tmp.join("ws/sql/sub")), "./sql/sub");
+        let outside = std::fs::canonicalize(&tmp).unwrap();
+        assert_eq!(doc.dir_value(&tmp), outside.display().to_string());
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]
