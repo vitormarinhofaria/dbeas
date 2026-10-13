@@ -86,6 +86,17 @@ pub struct TabSession {
     /// Ordenação ativa pelo cabeçalho.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<SavedSort>,
+    /// Instrução que produziu o último resultado, para refazê-lo ao abrir a
+    /// aba restaurada (só `SELECT` em abas de tabela).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_query: Option<SavedQuery>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SavedQuery {
+    /// Deslocamento, em bytes, da instrução no SQL da aba.
+    pub start: usize,
+    pub sql: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -176,6 +187,7 @@ mod tests {
                         split: 0.5,
                         hidden_columns: Vec::new(),
                         sort: None,
+                        last_query: None,
                     },
                     TabSession {
                         kind: TabKind::Table {
@@ -188,6 +200,10 @@ mod tests {
                         sort: Some(SavedSort {
                             column: "a".into(),
                             descending: true,
+                        }),
+                        last_query: Some(SavedQuery {
+                            start: 0,
+                            sql: "select a from t".into(),
                         }),
                     },
                 ],

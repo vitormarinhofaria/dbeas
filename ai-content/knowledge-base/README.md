@@ -40,6 +40,6 @@ decidido.
 - [Transações (requireTransaction)](usabilidade/transacoes.md) — transação manual com botões; grade, SQL manual e arquivos participam; resumo antes do COMMIT.
 - [Edição de dados](usabilidade/edicao-dados.md) — quando um resultado é editável, interação, Ctrl+S/Ctrl+Shift+S, execução parametrizada.
 - [Explorador de arquivos SQL](usabilidade/arquivos-sql.md) — navegação restrita ao sqlFilesDir e criação de arquivos.
-- [Quando SQL é executado](usabilidade/execucao-sql.md) — conexão, abertura de tabela, nada de execução automática de SQL do usuário.
+- [Quando SQL é executado](usabilidade/execucao-sql.md) — conexão, abertura de tabela, abas restauradas em branco (reexecutam o SELECT ao clicar), nada de execução automática de SQL do usuário.
 
 - [Identificação do workspace na barra lateral](usabilidade/identificacao-workspace-sidebar.md) — usar `name` da entrada do `dbeas.json`, não o nome do arquivo.

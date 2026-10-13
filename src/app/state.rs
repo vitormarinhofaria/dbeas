@@ -21,8 +21,9 @@ use crate::diagnostics::Diagnostic;
 use crate::file_explorer::FileEntry;
 use crate::metadata::Catalog;
 use crate::query::ResultSet;
+use crate::query::split;
 use crate::query::transform::Direction;
-use crate::session::{ExplorerMode, TabKind, TabSession, WorkspaceSession};
+use crate::session::{ExplorerMode, SavedQuery, TabKind, TabSession, WorkspaceSession};
 use crate::workspace::Descriptor;
 
 pub struct Workspace {
@@ -180,6 +181,11 @@ pub struct Tab {
     pub text_rev: u64,
     /// Revisão do texto analisada em `diagnostics`.
     pub diagnostics_rev: u64,
+    /// Aba restaurada da sessão cujo resultado ainda não foi refeito: guarda a
+    /// instrução que o produziu. Some ao iniciar qualquer execução na aba.
+    pub blank: Option<SavedQuery>,
+    /// Abriu-se a aba em branco antes de a conexão ficar pronta.
+    pub rerun_on_connect: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -301,6 +307,8 @@ impl Tab {
             diagnostics: Vec::new(),
             text_rev: 0,
             diagnostics_rev: 0,
+            blank: None,
+            rerun_on_connect: false,
         }
     }
 
@@ -315,6 +323,18 @@ impl Tab {
                 Direction::Asc
             };
             (s.column.clone(), direction)
+        });
+        tab.blank = saved.last_query.clone().or_else(|| match saved.kind {
+            // Sessões anteriores não guardavam a instrução; a aba de tabela
+            // tem uma só, gerada ao abrir.
+            TabKind::Table { .. } => match split::statements(&saved.sql).as_slice() {
+                [range] => Some(SavedQuery {
+                    start: range.start,
+                    sql: saved.sql[range.clone()].to_string(),
+                }),
+                _ => None,
+            },
+            _ => None,
         });
         if let TabKind::File { dirty, .. } = &saved.kind {
             tab.dirty = *dirty;
@@ -344,9 +364,18 @@ impl Tab {
                 .collect(),
             _ => self.columns.pending_hidden.clone(),
         };
+        let last_query = match (&self.run.result, &self.source) {
+            (Some(_), Some(source)) => Some(SavedQuery {
+                start: source.range.start,
+                sql: source.text.clone(),
+            }),
+            (Some(_), None) => None,
+            (None, _) => self.blank.clone(),
+        };
         TabSession {
             kind,
             sql,
+            last_query,
             split: self.split,
             hidden_columns,
             sort: self
@@ -377,6 +406,25 @@ impl Tab {
         }
     }
 
+    /// Instrução a refazer ao abrir a aba restaurada: só abas de tabela e só
+    /// `SELECT`, e apenas se o editor ainda a contém. Scratch e arquivos nunca
+    /// executam sozinhos.
+    pub fn restorable_query(&self) -> Option<std::ops::Range<usize>> {
+        let saved = self.blank.as_ref()?;
+        if !matches!(self.kind, TabKind::Table { .. })
+            || !crate::query::classify::is_select(&saved.sql)
+        {
+            return None;
+        }
+        let text = self.editor.text();
+        let at = saved.start..saved.start + saved.sql.len();
+        if text.get(at.clone()) == Some(saved.sql.as_str()) {
+            return Some(at);
+        }
+        let start = text.find(&saved.sql)?;
+        Some(start..start + saved.sql.len())
+    }
+
     pub fn is_scratch(&self) -> bool {
         matches!(self.kind, TabKind::Scratch)
     }
@@ -386,5 +434,80 @@ impl Tab {
             TabKind::File { path, .. } => Some(path),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn saved(kind: TabKind, sql: &str, last: Option<&str>) -> TabSession {
+        TabSession {
+            kind,
+            sql: sql.into(),
+            split: 0.5,
+            hidden_columns: Vec::new(),
+            sort: None,
+            last_query: last.map(|q| SavedQuery {
+                start: sql.find(q).unwrap_or(0),
+                sql: q.into(),
+            }),
+        }
+    }
+
+    fn table() -> TabKind {
+        TabKind::Table {
+            schema: "public".into(),
+            name: "t".into(),
+        }
+    }
+
+    #[test]
+    fn restored_table_select_is_rerun() {
+        let mut id = 0;
+        let sql = "-- nota\nselect a from t order by a";
+        let tab = Tab::restore(
+            &saved(table(), sql, Some("select a from t order by a")),
+            &mut id,
+        );
+        assert!(tab.blank.is_some());
+        assert_eq!(tab.restorable_query(), Some(8..sql.len()));
+        // A instrução continua na sessão enquanto a aba não for aberta.
+        assert_eq!(tab.snapshot().last_query, tab.blank);
+    }
+
+    #[test]
+    fn writes_scratch_and_files_are_not_rerun() {
+        let mut id = 0;
+        let update = Tab::restore(
+            &saved(table(), "update t set a = 1", Some("update t set a = 1")),
+            &mut id,
+        );
+        assert!(update.blank.is_some());
+        assert_eq!(update.restorable_query(), None);
+
+        let scratch = Tab::restore(
+            &saved(TabKind::Scratch, "select 1", Some("select 1")),
+            &mut id,
+        );
+        assert!(scratch.blank.is_some());
+        assert_eq!(scratch.restorable_query(), None);
+
+        let file = TabKind::File {
+            path: "/x.sql".into(),
+            dirty: true,
+        };
+        let file = Tab::restore(&saved(file, "select 1", Some("select 1")), &mut id);
+        assert_eq!(file.restorable_query(), None);
+    }
+
+    #[test]
+    fn legacy_table_tab_uses_its_single_statement() {
+        let mut id = 0;
+        let tab = Tab::restore(&saved(table(), "select a from t;", None), &mut id);
+        assert_eq!(tab.restorable_query(), Some(0..15));
+
+        let scratch = Tab::restore(&saved(TabKind::Scratch, "select 1", None), &mut id);
+        assert!(scratch.blank.is_none());
     }
 }

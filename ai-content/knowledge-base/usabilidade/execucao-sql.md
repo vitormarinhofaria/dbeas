@@ -10,8 +10,18 @@ automaticamente") junto da §4.3.
 - **Abrir tabela/view** (explorador ou Ctrl+P): gera `SELECT <colunas> FROM
   schema.tabela` e **executa na hora**, porque é SQL gerado pela aplicação e só de
   leitura. Se a aba já existe, é reutilizada.
-- **Nunca executa sozinho:** SQL do usuário, arquivos SQL abertos e abas
-  restauradas da sessão (a aba de tabela volta com o SQL, sem resultado).
+- **Nunca executa sozinho:** SQL do usuário e arquivos SQL abertos.
+- **Abas restauradas da sessão** (decisão de 2026-10-13): voltam sem resultado e
+  com indicador de "em branco" (título esmaecido, `◌` e dica ao passar o mouse).
+  A sessão guarda a instrução do último resultado (`last_query`: deslocamento +
+  texto). Ao **clicar** na aba, ela é reexecutada só se a aba for de **tabela** e
+  a instrução for um único `SELECT` somente leitura (`classify::is_select`: nada
+  de UPDATE/INSERT, CTE com escrita, `FOR UPDATE`, EXPLAIN ou várias instruções).
+  Scratch e arquivos nunca reexecutam; continuam com o indicador até o usuário
+  executar. A aba ativa na abertura não executa sozinha: só ao clicar. Clicada
+  antes da conexão terminar, executa quando ela chega. Sessões antigas sem
+  `last_query` usam a única instrução do SQL da aba de tabela. Código:
+  `Tab::restorable_query` (`src/app/state.rs`), `App::restore_blank_tab`.
 - **Ordenação por cabeçalho:** reescreve o ORDER BY e reexecuta a instrução que
   gerou o resultado. Ocultar e reordenar colunas alteram o SQL sem reexecutar. Ver
   [transformações](../arquitetura/transformacoes-sql.md).

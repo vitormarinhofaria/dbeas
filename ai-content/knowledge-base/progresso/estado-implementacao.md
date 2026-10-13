@@ -3,7 +3,7 @@
 Arquivo de continuidade: leia antes de retomar o trabalho com um contexto novo.
 Atualize ao fim de cada etapa.
 
-**Última atualização:** 2026-10-13 (editor gráfico do dbeas.json)
+**Última atualização:** 2026-10-13 (abas restauradas em branco)
 
 ## Como rodar e testar
 
@@ -113,6 +113,9 @@ futura. Autocomplete automático (após `.` e 2+ letras) e por Ctrl+Espaço.
    feito em 2026-10-13. Remover entrada existente pelo editor não foi pedido.
 5f. ~~Botão "Testar conexão" com resumo (latência, servidor, sessão)~~ — feito
    em 2026-10-13 (ver [editor gráfico](../configuracao/editor-grafico.md)).
+5g. ~~Abas restauradas com indicador de "em branco" e reexecução do último
+   SELECT ao clicar (só abas de tabela)~~ — feito em 2026-10-13, testado em
+   unidade, não verificado no app. Ver [execução de SQL](../usabilidade/execucao-sql.md).
 6. Melhorias conhecidas: o editor não rola horizontalmente (sem quebra de linha,
    linhas longas ficam cortadas); `timestamptz` é exibido em UTC; a altura usada no
    arraste do divisor é aproximada (`CHROME_HEIGHT`).

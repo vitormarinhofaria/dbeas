@@ -104,6 +104,16 @@ fn first_words(s: &str) -> String {
     s.split_whitespace().take(2).collect::<Vec<_>>().join(" ")
 }
 
+/// Uma única consulta `SELECT` (ou `WITH`/`VALUES`/`TABLE`) somente leitura.
+/// Usado para decidir se o resultado de uma aba restaurada pode ser refeito
+/// sozinho: `EXPLAIN`, `SHOW`, escritas e scripts com várias instruções não.
+pub fn is_select(sql: &str) -> bool {
+    match Parser::parse_sql(&PostgreSqlDialect {}, sql).as_deref() {
+        Ok([Statement::Query(query)]) => check_query(query).is_ok(),
+        _ => false,
+    }
+}
+
 /// Comando de controle de transação no início de uma instrução.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TxControl {
@@ -178,6 +188,21 @@ fn leading_words(sql: &str, count: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recognizes_plain_select() {
+        assert!(is_select("select a from t order by a"));
+        assert!(is_select("with x as (select 1) select * from x;"));
+        assert!(!is_select("update t set a = 1"));
+        assert!(!is_select("insert into t values (1)"));
+        assert!(!is_select(
+            "with x as (delete from t returning *) select * from x"
+        ));
+        assert!(!is_select("select * from t for update"));
+        assert!(!is_select("select 1; select 2"));
+        assert!(!is_select("explain select 1"));
+        assert!(!is_select("selec"));
+    }
 
     #[test]
     fn detects_transaction_control() {

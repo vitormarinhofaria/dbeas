@@ -242,9 +242,18 @@ impl App {
                 TabKind::Table { .. } => "▦",
                 TabKind::File { .. } => "▤",
             };
-            let mut content = row![text(icon).size(12), text(label).size(13)]
+            // Restaurada da sessão sem o resultado: título esmaecido e ◌.
+            let blank = tab.blank.is_some();
+            let mut label = text(label).size(13);
+            if blank {
+                label = label.style(muted);
+            }
+            let mut content = row![text(icon).size(12), label]
                 .spacing(6)
                 .align_y(Alignment::Center);
+            if blank {
+                content = content.push(text("◌").size(12).style(muted));
+            }
             if !tab.is_scratch() {
                 content = content.push(
                     button(text("×").size(13))
@@ -253,15 +262,23 @@ impl App {
                         .style(button::text),
                 );
             }
-            tabs = tabs.push(
-                mouse_area(
-                    button(content)
-                        .on_press(Message::SelectTab(i))
-                        .padding([4, 10])
-                        .style(move |theme: &Theme, status| tab_style(theme, status, active)),
+            let tab_button: Element<'_, Message> = button(content)
+                .on_press(Message::SelectTab(i))
+                .padding([4, 10])
+                .style(move |theme: &Theme, status| tab_style(theme, status, active))
+                .into();
+            let tab_button = match blank_hint(tab) {
+                Some(hint) => tooltip(
+                    tab_button,
+                    container(text(hint).size(12))
+                        .padding([4, 8])
+                        .style(container::rounded_box),
+                    tooltip::Position::Bottom,
                 )
-                .on_right_press(Message::TabMenu(i)),
-            );
+                .into(),
+                None => tab_button,
+            };
+            tabs = tabs.push(mouse_area(tab_button).on_right_press(Message::TabMenu(i)));
         }
         // O clique direito é capturado fora do `scrollable`, onde a posição
         // do cursor está em coordenadas da janela.
@@ -2283,6 +2300,16 @@ fn faint(theme: &Theme) -> text::Style {
             ..p.background.base.text
         }),
     }
+}
+
+/// Explicação do indicador de aba restaurada em branco.
+fn blank_hint(tab: &Tab) -> Option<&'static str> {
+    tab.blank.as_ref()?;
+    Some(if tab.restorable_query().is_some() {
+        "Resultado da sessão anterior não restaurado: abrir a aba refaz a consulta"
+    } else {
+        "Resultado da sessão anterior não restaurado: execute para ver de novo"
+    })
 }
 
 fn muted(theme: &Theme) -> text::Style {

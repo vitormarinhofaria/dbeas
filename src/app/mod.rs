@@ -617,7 +617,17 @@ impl App {
                         ws.status = Status::Connected;
                         ws.connection_error = None;
                         ws.connection = Some(handle);
-                        self.load_catalog(&id)
+                        let catalog = self.load_catalog(&id);
+                        let active = self.active_ws().is_some_and(|w| w.desc.id == id);
+                        let rerun = active
+                            && self
+                                .active_tab_mut()
+                                .is_some_and(|t| std::mem::take(&mut t.rerun_on_connect));
+                        if rerun {
+                            Task::batch([catalog, self.restore_blank_tab()])
+                        } else {
+                            catalog
+                        }
                     }
                     Err(error) => {
                         ws.status = Status::Error;
@@ -1315,7 +1325,9 @@ impl App {
                     if index < ws.tabs.len() {
                         ws.active_tab = index;
                         let tab = &ws.tabs[index];
-                        return schedule_diagnostics(ws.desc.id.clone(), tab.id, tab.text_rev);
+                        let diagnose =
+                            schedule_diagnostics(ws.desc.id.clone(), tab.id, tab.text_rev);
+                        return Task::batch([diagnose, self.restore_blank_tab()]);
                     }
                 }
                 Task::none()
@@ -2494,6 +2506,30 @@ impl App {
         self.start_execution(sql, base, statements, false)
     }
 
+    /// Refaz o resultado da aba ativa restaurada em branco, se for uma aba de
+    /// tabela cujo último resultado veio de um `SELECT`. Sem conexão pronta,
+    /// fica para quando ela chegar.
+    fn restore_blank_tab(&mut self) -> Task<Message> {
+        let Some(ws) = self.active_ws_mut() else {
+            return Task::none();
+        };
+        let connected = ws.connection.is_some();
+        let Some(tab) = ws.tabs.get_mut(ws.active_tab) else {
+            return Task::none();
+        };
+        if tab.run.running {
+            return Task::none();
+        }
+        let Some(range) = tab.restorable_query() else {
+            return Task::none();
+        };
+        if !connected {
+            tab.rerun_on_connect = true;
+            return Task::none();
+        }
+        self.execute_range(range, false)
+    }
+
     /// Executa a instrução que está em `range` no editor da aba ativa.
     fn execute_range(&mut self, range: std::ops::Range<usize>, from_grid: bool) -> Task<Message> {
         let Some(tab) = self.active_tab_mut() else {
@@ -2526,6 +2562,8 @@ impl App {
             );
             return Task::none();
         }
+        tab.blank = None;
+        tab.rerun_on_connect = false;
         tab.run.running = true;
         tab.run.exec_id += 1;
         tab.run.base_offset = base;
