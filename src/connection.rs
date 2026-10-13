@@ -24,7 +24,8 @@ use tokio_postgres::{CancelToken, Client, NoTls, RowStream};
 use crate::metadata::{self, Catalog};
 use crate::query::classify::{self, TxControl};
 use crate::query::{self, ColumnInfo, Outcome, QueryError, ResultSet, Value, value};
-use crate::workspace::ResolvedConfig;
+use crate::tls;
+use crate::workspace::{ResolvedConfig, SslMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -96,6 +97,10 @@ pub struct ConnectionHandle {
     requests: mpsc::UnboundedSender<Request>,
     cancel: CancelToken,
     tx: watch::Receiver<TxState>,
+    /// A conexão foi estabelecida com TLS.
+    tls: bool,
+    /// Modo TLS e CA, para as conexões de cancelamento.
+    ssl: (SslMode, Option<std::path::PathBuf>),
 }
 
 impl std::fmt::Debug for ConnectionHandle {
@@ -162,13 +167,30 @@ pub async fn connect(config: ResolvedConfig) -> Result<ConnectionHandle, String>
         pg.options("-c default_transaction_read_only=on");
     }
 
-    // A mensagem de erro do tokio-postgres não inclui a senha.
-    let (client, connection) = pg.connect(NoTls).await.map_err(|e| e.to_string())?;
+    pg.ssl_mode(tls::negotiation(config.ssl_mode));
 
-    tokio::spawn(async move {
-        // Encerra quando o cliente é descartado ou a conexão cai.
-        let _ = connection.await;
-    });
+    // A mensagem de erro do tokio-postgres não inclui a senha.
+    let explain =
+        |e: tokio_postgres::Error| tls::explain_error(&tls::error_chain(&e), config.ssl_mode);
+    let (client, negotiated) = if config.ssl_mode == SslMode::Disable {
+        let (client, connection) = pg.connect(NoTls).await.map_err(explain)?;
+        tokio::spawn(async move {
+            // Encerra quando o cliente é descartado ou a conexão cai.
+            let _ = connection.await;
+        });
+        (client, false)
+    } else {
+        let (connector, negotiated) =
+            tls::connector(config.ssl_mode, config.ssl_root_cert.as_deref())?;
+        let (client, connection) = pg.connect(connector).await.map_err(explain)?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        (
+            client,
+            negotiated.load(std::sync::atomic::Ordering::Relaxed),
+        )
+    };
 
     let cancel = client.cancel_token();
     let (tx, rx) = mpsc::unbounded_channel();
@@ -191,6 +213,8 @@ pub async fn connect(config: ResolvedConfig) -> Result<ConnectionHandle, String>
         requests: tx,
         cancel,
         tx: tx_state,
+        tls: negotiated,
+        ssl: (config.ssl_mode, config.ssl_root_cert.clone()),
     })
 }
 
@@ -247,6 +271,11 @@ impl ConnectionHandle {
         rx.await.map_err(|_| closed())?
     }
 
+    /// `true` se a conexão usa TLS (em `prefer`, o servidor pode ter recusado).
+    pub fn uses_tls(&self) -> bool {
+        self.tls
+    }
+
     /// Estado atual da transação. Atualizado pelo ator antes de responder a
     /// cada pedido.
     pub fn tx_state(&self) -> TxState {
@@ -268,8 +297,17 @@ impl ConnectionHandle {
 
     /// Pede ao servidor que cancele a consulta em andamento.
     pub async fn cancel(&self) -> Result<(), String> {
+        // O pedido de cancelamento abre uma conexão nova: usa o mesmo modo TLS.
+        if self.ssl.0 == SslMode::Disable {
+            return self
+                .cancel
+                .cancel_query(NoTls)
+                .await
+                .map_err(|e| e.to_string());
+        }
+        let (connector, _) = tls::connector(self.ssl.0, self.ssl.1.as_deref())?;
         self.cancel
-            .cancel_query(NoTls)
+            .cancel_query(connector)
             .await
             .map_err(|e| e.to_string())
     }

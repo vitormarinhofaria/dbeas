@@ -34,6 +34,8 @@ fn config_with(read_only: bool, require_transaction: bool) -> Option<ResolvedCon
         read_only,
         require_transaction,
         sql_files_dir: None,
+        ssl_mode: dbeas::workspace::SslMode::Disable,
+        ssl_root_cert: None,
     })
 }
 

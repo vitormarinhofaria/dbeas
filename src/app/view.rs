@@ -152,6 +152,10 @@ impl App {
                         .size(13)
                         .style(muted),
                 );
+                if let Some(handle) = ws.connection.as_ref() {
+                    let (label, explanation) = tls_badge(c, handle.uses_tls());
+                    info = info.push(badge(label, explanation));
+                }
                 if c.read_only {
                     info = info.push(badge(
                         "somente leitura",
@@ -959,6 +963,45 @@ fn status_dot<'a>(status: Status) -> Element<'a, Message> {
         Status::Error => ("✕", Color::from_rgb(0.95, 0.4, 0.4)),
     };
     text(symbol).size(14).color(color).into()
+}
+
+/// Rótulo e explicação do estado TLS da conexão ativa.
+fn tls_badge(
+    config: &crate::workspace::ResolvedConfig,
+    uses_tls: bool,
+) -> (&'static str, &'static str) {
+    use crate::tls::Verification;
+    use crate::workspace::SslMode;
+    if !uses_tls {
+        return match config.ssl_mode {
+            SslMode::Disable => (
+                "sem TLS",
+                "Conexão sem criptografia (sslMode disable). Configure sslMode no dbeas.json para usar TLS.",
+            ),
+            _ => (
+                "sem TLS",
+                "O servidor não aceitou TLS e a conexão seguiu sem criptografia (sslMode prefer). \
+                 Use sslMode require ou verify-full para exigir TLS.",
+            ),
+        };
+    }
+    match crate::tls::verification(config.ssl_mode, config.ssl_root_cert.is_some()) {
+        Some(Verification::Full) => (
+            "TLS verificado",
+            "Conexão cifrada; o certificado do servidor foi emitido por CA confiável e corresponde a \
+             dbHost (sslMode verify-full).",
+        ),
+        Some(Verification::Ca) => (
+            "TLS (CA verificada)",
+            "Conexão cifrada; o certificado foi emitido por CA confiável, mas o nome do host não foi \
+             conferido (sslMode verify-ca, ou require com sslRootCert).",
+        ),
+        _ => (
+            "TLS sem verificação",
+            "Conexão cifrada, mas o certificado do servidor não foi verificado (sslMode prefer/require): \
+             não protege contra interceptação. Use verify-full com sslRootCert para verificar.",
+        ),
+    }
 }
 
 fn badge<'a>(label: &'a str, explanation: &'a str) -> Element<'a, Message> {

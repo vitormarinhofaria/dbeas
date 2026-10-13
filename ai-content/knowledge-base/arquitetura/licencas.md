@@ -23,6 +23,8 @@
 - **MPL-2.0** (`option-ext`, via `dirs`): compatível (cláusula de Secondary License).
 - Licenças duplas com opção GPL/LGPL (`self_cell`, `r-efi`): usa-se a opção
   permissiva.
+- **rustls** usa o provedor `ring` (Apache-2.0 AND ISC). Não usar `aws-lc-rs`, que
+  inclui código sob a licença OpenSSL antiga (incompatível com GPL-3).
 - **libpg_query** (C embutido pelo `pg_query`): BSD-3-Clause + PostgreSQL License,
   compatíveis. Não é crate: os textos estão fixos em `about.hbs`.
 

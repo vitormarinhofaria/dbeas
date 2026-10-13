@@ -56,7 +56,7 @@ Exemplo:
 [
   {
     "name": "Desenvolvimento",
-    "env_file": ".env",
+    "envFile": ".env",
     "env": {
       "DB_HOST": "localhost",
       "DB_PORT": "5432"
@@ -68,7 +68,9 @@ Exemplo:
     "dbName": "app_dev",
     "readOnly": false,
     "requireTransaction": true,
-    "sqlFilesDir": "./sql"
+    "sqlFilesDir": "./sql",
+    "sslMode": "verify-full",
+    "sslRootCert": "./certs/ca.pem"
   }
 ]
 ```
@@ -80,7 +82,7 @@ obrigatórios e não possuem valores padrão. Em caso de colisão de `name` entr
   | Campo | Tipo | Obrigatório | Comportamento |
 | --- | --- | --- | --- |
 | `name` | string | **Sim** | Nome exibível do workspace. Valor vazio ou ausente torna a entrada inválida. |
-| `env_file` | string | Não | Caminho para arquivo `.env`; caminho relativo é resolvido a partir do diretório do `dbeas.json`. |
+| `envFile` | string | Não | Caminho para arquivo `.env`; caminho relativo é resolvido a partir do diretório do `dbeas.json`. |
 | `env` | objeto string → string | Não | Variáveis adicionais ou sobrescritas usadas na resolução de configuração. |
 | `dbHost` | string | Não | Host PostgreSQL. Se ausente ou vazio, usar `localhost`. Aceita `${env.NOME}`. |
 | `dbPort` | número ou string numérica | Não | Porta PostgreSQL. Se ausente ou vazia, usar `5432`. Aceita `${env.NOME}`. |
@@ -89,6 +91,8 @@ obrigatórios e não possuem valores padrão. Em caso de colisão de `name` entr
 | `dbName` | string | **Sim** | Nome do banco de dados. Valor vazio ou ausente torna a configuração inválida. Aceita `${env.NOME}`. |
 | `readOnly` | boolean | Não | Padrão `false`. Quando `true`, a aplicação deve tratar o workspace como somente leitura e impedir operações de escrita pela UI. |
 | `requireTransaction` | boolean | Não | Padrão `false`. Quando `true`, alterações de dados devem ser executadas em transação explícita e confirmadas pelo usuário antes do `COMMIT`. |
+| `sslMode` | string | Não | Modo TLS, com a semântica do `sslmode` do libpq: `disable`, `prefer` (padrão), `require`, `verify-ca` ou `verify-full`. `prefer` tenta TLS e aceita conexão sem TLS; `require` exige TLS sem verificar o certificado (com `sslRootCert`, verifica a CA, como no libpq); `verify-ca` verifica a CA; `verify-full` verifica a CA e o nome do host. Aceita `${env.NOME}`. |
+| `sslRootCert` | string | Não | Arquivo PEM com a(s) CA(s) confiáveis para verificar o servidor. Caminho relativo é resolvido a partir do diretório do `dbeas.json`. Sem ele, os modos com verificação usam as CAs do sistema. Aceita `${env.NOME}`. |
 | `sqlFilesDir` | string | Não | Diretório inicial do explorador de arquivos SQL. Caminho relativo é resolvido a partir do diretório do `dbeas.json`. Se omitido ou inválido, a área de arquivos informa que não há diretório configurado. |
 
 ### 3.3. Resolução de variáveis e precedência
@@ -99,7 +103,7 @@ Valores de configuração podem referenciar variáveis com a sintaxe
 A resolução deve seguir esta ordem, da menor para a maior precedência:
 
 1.  Variáveis herdadas do ambiente do processo.
-2.  Variáveis carregadas de `env_file`.
+2.  Variáveis carregadas de `envFile`.
 3.  Entradas do objeto `env` no workspace.
 
 Assim, `env` pode sobrescrever valores existentes no ambiente ou no

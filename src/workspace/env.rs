@@ -8,7 +8,7 @@ use std::path::Path;
 
 use super::config::ConfigError;
 
-/// Ambiente resultante da precedência: processo < `env_file` < `env`.
+/// Ambiente resultante da precedência: processo < `envFile` < `env`.
 pub type EnvMap = HashMap<String, String>;
 
 pub fn build_env(

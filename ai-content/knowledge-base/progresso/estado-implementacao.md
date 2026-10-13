@@ -3,7 +3,7 @@
 Arquivo de continuidade: leia antes de retomar o trabalho com um contexto novo.
 Atualize ao fim de cada etapa.
 
-**Última atualização:** 2026-10-09 (rodada 4 — autocomplete e diagnóstico)
+**Última atualização:** 2026-10-13 (TLS)
 
 ## Como rodar e testar
 
@@ -11,7 +11,7 @@ Atualize ao fim de cada etapa.
   `~/.local/state/dbeas/session.json`.
 - Para não tocar na configuração real, isole com
   `XDG_CONFIG_HOME=/tmp/x/config XDG_STATE_HOME=/tmp/x/state cargo run`.
-- `cargo test` — testes unitários (77) + 7 de integração com PG. O build do
+- `cargo test` — testes unitários + 7 de integração com PG; TLS: `scripts/test-tls.sh`. O build do
   `pg_query` precisa de `clang`.
 - Testes com PostgreSQL real (`tests/postgres.rs`), ignorados sem a variável:
   ```
@@ -97,7 +97,8 @@ futura. Autocomplete automático (após `.` e 2+ letras) e por Ctrl+Espaço.
 3. ~~requireTransaction~~ — feito na rodada 3 (ver [transações](../usabilidade/transacoes.md)).
 4. ~~Autocomplete / diagnóstico~~ — feito na rodada 4 (embutido). Pendente opcional:
    integração com servidor LSP externo.
-5. TLS (`sslMode`) — decidido adiar; conexão usa `NoTls`.
+5. ~~TLS (`sslMode`)~~ — feito em 2026-10-13 (ver [TLS](../arquitetura/tls.md)).
+   Testes: `scripts/test-tls.sh`.
 5a. ~~Criar arquivo SQL pelo explorador~~ — feito em 2026-10-09 (spec §8). Ver
    [arquivos SQL](../usabilidade/arquivos-sql.md).
 5b. ~~Menu de contexto (renomear/mover e excluir) no explorador~~ — feito em
@@ -124,4 +125,5 @@ futura. Autocomplete automático (após `.` e 2+ letras) e por Ctrl+Espaço.
 - [Transações](../usabilidade/transacoes.md)
 - [Edição de dados](../usabilidade/edicao-dados.md)
 - [Arquivos SQL](../usabilidade/arquivos-sql.md)
+- [TLS](../arquitetura/tls.md)
 - [Editor inteligente](../arquitetura/editor-inteligente.md)

@@ -10,7 +10,7 @@ pub mod env;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-pub use config::{ConfigError, ResolvedConfig};
+pub use config::{ConfigError, ResolvedConfig, SslMode};
 
 /// Identificador estável de um workspace entre execuções: caminho do arquivo +
 /// `name` (ou índice, quando a entrada não tem nome). Usado como chave da sessão.

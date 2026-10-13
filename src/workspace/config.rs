@@ -19,6 +19,11 @@ pub const DEFAULT_PORT: u16 = 5432;
 /// que mensagens nunca exponham senhas ou outros segredos.
 #[derive(Debug, Clone, Error, PartialEq)]
 pub enum ConfigError {
+    #[error("o campo `{old}` foi renomeado para `{new}`; atualize o dbeas.json")]
+    RenamedField {
+        old: &'static str,
+        new: &'static str,
+    },
     #[error("não foi possível ler {path}: {reason}")]
     Read { path: PathBuf, reason: String },
     #[error("JSON inválido em {path}: {reason}")]
@@ -40,7 +45,11 @@ pub enum ConfigError {
     InvalidReference { field: String, reason: String },
     #[error("`dbPort` deve ser um inteiro entre 1 e 65535")]
     InvalidPort,
-    #[error("não foi possível ler o env_file {path}: {reason}")]
+    #[error(
+        "`sslMode` deve ser disable, prefer, require, verify-ca ou verify-full (recebido: `{0}`)"
+    )]
+    InvalidSslMode(String),
+    #[error("não foi possível ler o envFile {path}: {reason}")]
     EnvFile { path: PathBuf, reason: String },
     #[error("`dbUser` não definido e não foi possível obter o usuário do sistema")]
     MissingUser,
@@ -83,6 +92,53 @@ pub struct ResolvedConfig {
     /// `None` quando não configurado. A existência do diretório é verificada
     /// pelo explorador de arquivos, que informa o problema na própria área.
     pub sql_files_dir: Option<PathBuf>,
+    pub ssl_mode: SslMode,
+    /// CA usada para verificar o certificado do servidor (`sslRootCert`).
+    pub ssl_root_cert: Option<PathBuf>,
+}
+
+/// Modo TLS da conexão, com a semântica do `sslmode` do libpq.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SslMode {
+    /// Sem TLS.
+    Disable,
+    /// Tenta TLS; se o servidor não suportar, conecta sem. Sem verificar o
+    /// certificado. Padrão, como no psql.
+    #[default]
+    Prefer,
+    /// Exige TLS, sem verificar o certificado — exceto quando há
+    /// `sslRootCert`, caso em que se comporta como `VerifyCa` (como o libpq).
+    Require,
+    /// Exige TLS e verifica se o certificado foi emitido por uma CA confiável.
+    VerifyCa,
+    /// Como `VerifyCa` e também verifica se o certificado corresponde ao host.
+    VerifyFull,
+}
+
+impl SslMode {
+    pub const ALL: [SslMode; 5] = [
+        SslMode::Disable,
+        SslMode::Prefer,
+        SslMode::Require,
+        SslMode::VerifyCa,
+        SslMode::VerifyFull,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SslMode::Disable => "disable",
+            SslMode::Prefer => "prefer",
+            SslMode::Require => "require",
+            SslMode::VerifyCa => "verify-ca",
+            SslMode::VerifyFull => "verify-full",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|m| m.as_str().eq_ignore_ascii_case(value.trim()))
+    }
 }
 
 /// Uma entrada do array do `dbeas.json`: válida ou com erro. O nome é mantido
@@ -171,7 +227,15 @@ fn resolve_entry(
         .ok_or(ConfigError::MissingField("name"))?
         .to_string();
 
-    let env_file = opt_str(obj, "env_file")?
+    // Nome antigo: recusado com mensagem clara em vez de ignorado em silêncio
+    // (o que deixaria as variáveis do arquivo sem efeito).
+    if obj.contains_key("env_file") {
+        return Err(ConfigError::RenamedField {
+            old: "env_file",
+            new: "envFile",
+        });
+    }
+    let env_file = opt_str(obj, "envFile")?
         .filter(|s| !s.is_empty())
         .map(|p| fsutil::normalize(base_dir, Path::new(p)));
 
@@ -226,6 +290,14 @@ fn resolve_entry(
         .filter(|s| !s.is_empty())
         .map(|p| fsutil::normalize(base_dir, Path::new(p)));
 
+    let ssl_mode = match resolve_str(obj, "sslMode", &env)?.filter(|s| !s.trim().is_empty()) {
+        None => SslMode::default(),
+        Some(value) => SslMode::parse(&value).ok_or(ConfigError::InvalidSslMode(value))?,
+    };
+    let ssl_root_cert = resolve_str(obj, "sslRootCert", &env)?
+        .filter(|s| !s.is_empty())
+        .map(|p| fsutil::normalize(base_dir, Path::new(&p)));
+
     Ok(ResolvedConfig {
         name,
         host,
@@ -236,6 +308,8 @@ fn resolve_entry(
         read_only,
         require_transaction,
         sql_files_dir,
+        ssl_mode,
+        ssl_root_cert,
     })
 }
 
@@ -395,6 +469,70 @@ mod tests {
         )
         .unwrap();
         assert!(c.read_only && c.require_transaction);
+    }
+
+    #[test]
+    fn env_file_is_read_from_config_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".env"), "U=do_arquivo\nP=segredo\n").unwrap();
+        let json = r#"[{"name":"a","envFile":".env","dbName":"x","dbUser":"${env.U}","dbPass":"${env.P}"}]"#;
+        let entries = parse(json, &dir.path().join("dbeas.json"), dir.path(), Vec::new()).unwrap();
+        let c = entries[0].result.as_ref().unwrap();
+        assert_eq!(c.user, "do_arquivo");
+        assert_eq!(c.password.expose(), Some("segredo"));
+
+        let err = parse_one(
+            r#"[{"name":"a","dbName":"x","dbUser":"u","envFile":"nao-existe.env"}]"#,
+            &[],
+        )
+        .unwrap_err();
+        assert!(matches!(err, ConfigError::EnvFile { .. }));
+    }
+
+    #[test]
+    fn ssl_settings() {
+        let c = parse_one(r#"[{"name":"a","dbName":"x","dbUser":"u"}]"#, &[]).unwrap();
+        assert_eq!(c.ssl_mode, SslMode::Prefer);
+        assert_eq!(c.ssl_root_cert, None);
+
+        let c = parse_one(
+            r#"[{"name":"a","dbName":"x","dbUser":"u","sslMode":"Verify-Full","sslRootCert":"./certs/ca.pem"}]"#,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(c.ssl_mode, SslMode::VerifyFull);
+        assert_eq!(c.ssl_root_cert, Some(PathBuf::from("/p/certs/ca.pem")));
+
+        let c = parse_one(
+            r#"[{"name":"a","dbName":"x","dbUser":"u","sslMode":"${env.MODO}"}]"#,
+            &[("MODO", "disable")],
+        )
+        .unwrap();
+        assert_eq!(c.ssl_mode, SslMode::Disable);
+
+        let err = parse_one(
+            r#"[{"name":"a","dbName":"x","dbUser":"u","sslMode":"allow"}]"#,
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(err, ConfigError::InvalidSslMode("allow".into()));
+    }
+
+    #[test]
+    fn old_env_file_name_is_rejected_with_hint() {
+        let err = parse_one(
+            r#"[{"name":"a","dbName":"x","dbUser":"u","env_file":".env"}]"#,
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ConfigError::RenamedField {
+                old: "env_file",
+                new: "envFile"
+            }
+        );
+        assert!(err.to_string().contains("envFile"));
     }
 
     #[test]

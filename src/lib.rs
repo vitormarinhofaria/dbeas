@@ -17,4 +17,5 @@ pub mod query;
 pub mod session;
 pub mod settings;
 pub mod sql_editor;
+pub mod tls;
 pub mod workspace;

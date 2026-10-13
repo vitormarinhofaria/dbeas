@@ -47,8 +47,6 @@ allow = [
     "Unicode-3.0",
     # Compatível com GPL-3.0 pela cláusula de "Secondary License" da MPL 2.0.
     "MPL-2.0",
-    "GPL-3.0-or-later",
-    "LGPL-3.0-or-later",
 ]
 confidence-threshold = 0.93
 
