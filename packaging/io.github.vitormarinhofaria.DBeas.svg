@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Vitor Marinho Faria -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="#1f3a5f"/>
+  <g fill="none" stroke="#8ec5ff" stroke-width="6">
+    <ellipse cx="64" cy="38" rx="30" ry="10" fill="#2f5d8f"/>
+    <path d="M34 38v52c0 5.5 13.4 10 30 10s30-4.5 30-10V38"/>
+    <path d="M34 64c0 5.5 13.4 10 30 10s30-4.5 30-10"/>
+  </g>
+</svg>

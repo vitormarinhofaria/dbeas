@@ -37,14 +37,30 @@ use crate::workspace::{self, WorkspaceId};
 use quick_open::QuickOpen;
 use state::{ErrorInfo, Tab, Workspace};
 
+/// Identificador da aplicação no desktop: casa a janela com o arquivo
+/// `.desktop` e o ícone instalados pelo pacote (ver `packaging/`).
+pub const APP_ID: &str = "io.github.vitormarinhofaria.DBeas";
+
 pub fn run() -> iced::Result {
     iced::application(App::boot, App::update, App::view)
+        .window(window_settings())
         .title(App::title)
         .theme(App::theme)
         .subscription(App::subscription)
         .exit_on_close_request(false)
         .window_size(Size::new(1400.0, 860.0))
         .run()
+}
+
+fn window_settings() -> iced::window::Settings {
+    iced::window::Settings {
+        #[cfg(target_os = "linux")]
+        platform_specific: iced::window::settings::PlatformSpecific {
+            application_id: APP_ID.to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
 }
 
 pub struct App {

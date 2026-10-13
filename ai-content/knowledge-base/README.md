@@ -31,6 +31,7 @@ decidido.
 - [Editor inteligente](arquitetura/editor-inteligente.md) — autocomplete pelo catálogo e diagnóstico de sintaxe com libpg_query (FFI).
 - [Iced: estabilidade da árvore de widgets](arquitetura/iced-estabilidade-da-arvore.md) — **leia antes de mexer em views**: estrutura condicional faz widgets perderem foco/estado.
 - [Licença e dependências](arquitetura/licencas.md) — GPL-3.0-or-later, cabeçalho SPDX obrigatório, cargo-deny e cargo-about.
+- [Empacotamento .deb](arquitetura/empacotamento-deb.md) — `scripts/package-deb.sh` (container Debian 12; instala em Ubuntu 22.04+ e Debian 12+), APP_ID/.desktop/ícone, dependências carregadas por dlopen.
 - [Conexões TLS](arquitetura/tls.md) — sslMode/sslRootCert, rustls+ring, selo de TLS e `scripts/test-tls.sh` (containers sem porta, Docker rootless).
 - [Regras do dbeas.json](configuracao/dbeas-json.md) — validação, interpolação e padrões como implementados.
 - [Editor gráfico do dbeas.json](configuracao/editor-grafico.md) — ícone ⚙ na sidebar, uma aba por entrada e "+ nova entrada", testar conexão com resumo, prévias de `${env.X}` (senha só com asteriscos), gravação que preserva o arquivo.

@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Ambiente de build do .deb sobre Debian 12: o pacote gerado exige glibc 2.35
+# e instala em Ubuntu 22.04+ e Debian 12+. Usado por scripts/package-deb.sh.
+FROM rust:1-bookworm
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libclang-dev clang \
+    && rm -rf /var/lib/apt/lists/*
+RUN cargo install --locked cargo-deb cargo-deny \
+    && cargo install --locked cargo-about --features cli

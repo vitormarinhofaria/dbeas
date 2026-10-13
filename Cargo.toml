@@ -31,3 +31,28 @@ rustls-native-certs = "0.8"
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+# Pacote .deb (Debian/Ubuntu): `scripts/package-deb.sh`.
+# Ver ai-content/knowledge-base/arquitetura/empacotamento-deb.md.
+[package.metadata.deb]
+maintainer = "Vitor Marinho Faria <vitormarinhofaria@gmail.com>"
+copyright = "2026, Vitor Marinho Faria"
+license-file = ["LICENSE", "0"]
+section = "database"
+priority = "optional"
+extended-description = """\
+DBeas é um cliente desktop para PostgreSQL: workspaces definidos em dbeas.json, \
+editor SQL com autocomplete e diagnóstico de sintaxe, grade de resultados com \
+edição de dados e conexões TLS."""
+# $auto cobre as bibliotecas ligadas diretamente; winit e wgpu carregam as de
+# janela e de GPU com dlopen, por isso entram à mão.
+depends = "$auto, libxkbcommon0, libwayland-client0, libx11-6, libx11-xcb1, libxcursor1, libxi6, libxrandr2, libxkbcommon-x11-0"
+# Vulkan/GL é opcional (o Iced cai no renderizador de software tiny-skia); o
+# portal fornece os diálogos de arquivo/diretório (rfd com xdg-portal).
+recommends = "libvulkan1, mesa-vulkan-drivers, libegl1, xdg-desktop-portal, fonts-dejavu-core"
+assets = [
+    ["target/release/dbeas", "usr/bin/", "755"],
+    ["packaging/io.github.vitormarinhofaria.DBeas.desktop", "usr/share/applications/", "644"],
+    ["packaging/io.github.vitormarinhofaria.DBeas.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["THIRD_PARTY_LICENSES.html", "usr/share/doc/dbeas/", "644"],
+]
