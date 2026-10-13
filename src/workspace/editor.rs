@@ -64,6 +64,22 @@ impl Field {
         }
     }
 
+    /// Nome descritivo exibido no editor, acima da chave.
+    pub fn title(self) -> &'static str {
+        match self {
+            Field::Name => "Nome do workspace",
+            Field::EnvFile => "Arquivo de variáveis",
+            Field::DbHost => "Servidor",
+            Field::DbPort => "Porta",
+            Field::DbUser => "Usuário",
+            Field::DbPass => "Senha",
+            Field::DbName => "Nome do banco",
+            Field::SqlFilesDir => "Diretório de SQL",
+            Field::SslMode => "Modo TLS",
+            Field::SslRootCert => "Certificado CA",
+        }
+    }
+
     /// Campos em que `${env.NOME}` é expandido (spec §3.2).
     pub fn interpolated(self) -> bool {
         matches!(
@@ -238,6 +254,11 @@ impl Document {
     /// Há algo a gravar: entrada alterada ou entrada nova.
     pub fn is_dirty(&self) -> bool {
         self.forms.iter().any(|f| f.index.is_none() || f.is_dirty())
+    }
+
+    /// Pode gravar: há alterações e nenhuma aba com erro bloqueante.
+    pub fn can_save(&self) -> bool {
+        self.is_dirty() && self.blocking().is_none()
     }
 
     /// Primeira aba com erro que impede gravar.

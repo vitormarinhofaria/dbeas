@@ -864,6 +864,8 @@ fn workspace_item(index: usize, ws: &Workspace, active: bool) -> Element<'_, Mes
 
 /// Largura da coluna de rótulos do editor de configurações.
 const SETTINGS_LABEL_WIDTH: f32 = 150.0;
+/// Contêiner dos campos do editor de configurações: escopo do Tab.
+pub(super) const SETTINGS_FIELDS: &str = "settings-fields";
 
 /// Editor gráfico das entradas de um `dbeas.json`: uma aba por entrada.
 fn settings_view<'a>(
@@ -974,27 +976,22 @@ fn settings_view<'a>(
             Field::EnvFile,
             input(Field::EnvFile, "ex.: .env").into()
         ),
-        row![
-            text("env")
-                .size(12)
-                .font(Font::MONOSPACE)
-                .width(SETTINGS_LABEL_WIDTH),
-            env_section,
-        ]
-        .spacing(8),
+        row![field_label("Variáveis extras", "env"), env_section].spacing(8),
         section("Comportamento"),
         labeled(
+            "Somente leitura",
             "readOnly",
             checkbox(form.read_only)
-                .label("Somente leitura")
+                .label("Impedir alterações de dados")
                 .on_toggle(Message::SettingsReadOnly)
                 .text_size(13)
                 .into(),
         ),
         labeled(
+            "Exigir transação",
             "requireTransaction",
             checkbox(form.require_transaction)
-                .label("Exigir transação explícita para alterar dados")
+                .label("Alterar dados só dentro de transação explícita")
                 .on_toggle(Message::SettingsRequireTransaction)
                 .text_size(13)
                 .into(),
@@ -1063,6 +1060,7 @@ fn settings_view<'a>(
         settings_tabs(doc),
         text(entry).size(12).style(muted),
         container(scrollable(fields).height(Length::Shrink))
+            .id(SETTINGS_FIELDS)
             .max_height((window_height - 320.0 - below).max(160.0)),
         status,
     ]
@@ -1106,9 +1104,7 @@ fn settings_view<'a>(
             button(text("Cancelar"))
                 .on_press(Message::CloseModal)
                 .style(button::secondary),
-            button(text("Salvar")).on_press_maybe(
-                (doc.is_dirty() && blocking.is_none()).then_some(Message::SettingsSave)
-            ),
+            button(text("Salvar")).on_press_maybe(doc.can_save().then_some(Message::SettingsSave)),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
@@ -1254,17 +1250,27 @@ fn section<'a>(title: &'a str) -> Element<'a, Message> {
         .into()
 }
 
-fn labeled<'a>(label: &'a str, content: Element<'a, Message>) -> Element<'a, Message> {
-    row![
-        text(label)
-            .size(12)
-            .font(Font::MONOSPACE)
-            .width(SETTINGS_LABEL_WIDTH),
-        content,
+/// Rótulo de campo do editor: nome descritivo e, abaixo, a chave no
+/// `dbeas.json` em letra menor e mais apagada.
+fn field_label<'a>(title: &'a str, key: &'a str) -> Element<'a, Message> {
+    column![
+        text(title).size(13),
+        text(key).size(11).font(Font::MONOSPACE).style(faint),
     ]
-    .spacing(8)
-    .align_y(Alignment::Center)
+    .spacing(1)
+    .width(SETTINGS_LABEL_WIDTH)
     .into()
+}
+
+fn labeled<'a>(
+    title: &'a str,
+    key: &'a str,
+    content: Element<'a, Message>,
+) -> Element<'a, Message> {
+    row![field_label(title, key), content]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 /// Campo com a prévia do valor resolvido logo abaixo. A prévia é acrescentada
@@ -1275,7 +1281,7 @@ fn settings_field<'a>(
     field: Field,
     input: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let mut col = column![labeled(field.key(), input)].spacing(3);
+    let mut col = column![labeled(field.title(), field.key(), input)].spacing(3);
     if let Some(preview) = form.preview(field) {
         let indent = Space::new().width(SETTINGS_LABEL_WIDTH + 8.0);
         let value: Element<'a, Message> = match preview {
@@ -2182,6 +2188,17 @@ fn quick_open_view(q: &QuickOpen) -> Element<'_, Message> {
 
 // ----------------------------------------------------------------------
 // Estilos
+
+/// Mais apagado que `muted`, para texto secundário sob um rótulo.
+fn faint(theme: &Theme) -> text::Style {
+    let p = theme.extended_palette();
+    text::Style {
+        color: Some(Color {
+            a: 0.4,
+            ..p.background.base.text
+        }),
+    }
+}
 
 fn muted(theme: &Theme) -> text::Style {
     let p = theme.extended_palette();

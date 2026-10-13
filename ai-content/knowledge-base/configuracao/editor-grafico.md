@@ -19,6 +19,11 @@ testada); tela em `settings_view`/`settings_tabs` (`src/app/view.rs`); fluxo em
   é feito pelo editor. Trocar de aba volta a ocultar a senha.
 - Salvar grava todas as abas de uma vez; fica desabilitado se alguma aba tiver
   erro bloqueante (a mensagem diz qual aba). Arquivo `[]` abre com uma aba nova.
+- Rótulos (pedido do usuário em 2026-10-13): nome descritivo em português
+  (`Field::title`, ex.: "Nome do banco") e, logo abaixo, a chave do json
+  (`dbName`) menor, monoespaçada e mais apagada (`faint`, alfa 0.4). Montado por
+  `field_label`/`labeled` em `src/app/view.rs`; vale também para `env`,
+  `readOnly` e `requireTransaction`.
 - Todos os campos são texto, **inclusive `dbPort`**. `sslMode` é um dropdown
   (padrão + os 5 modos); se o valor atual não for um deles (ex.:
   `${env.SSL_MODE}`), ele entra como opção extra para não ser perdido.
@@ -40,6 +45,13 @@ testada); tela em `settings_view`/`settings_tabs` (`src/app/view.rs`); fluxo em
   inválido ou repetido em `env`. Os demais erros (variável ausente, `envFile`
   inexistente) só avisam: podem depender da máquina.
 - Clique fora do modal não fecha; Esc não fecha se houver alterações.
+- Teclado (pedido do usuário em 2026-10-13): ao abrir, o foco vai para o
+  primeiro campo (tirando-o do editor SQL sob o modal, que receberia Tab/Enter).
+  Tab/Shift+Tab percorrem só os campos de texto do diálogo, circularmente, e
+  rolam a área até o campo focado (`src/app/focus.rs`, escopo = contêiner
+  `SETTINGS_FIELDS`; o `focus_next` do Iced não serve: percorre a árvore
+  inteira, não volta ao início e não rola). Enter salva quando o botão Salvar
+  está habilitado (`Document::can_save`), com qualquer campo focado ou sem foco.
 
 ## Testar conexão
 

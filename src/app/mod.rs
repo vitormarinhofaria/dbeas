@@ -3,6 +3,7 @@
 
 //! Estado global, mensagens e ciclo de vida da janela.
 
+mod focus;
 mod quick_open;
 mod state;
 mod view;
@@ -698,10 +699,14 @@ impl App {
                             show_password: false,
                             test: None,
                         });
+                        // Tira o foco do editor SQL sob o modal (Tab/Enter iriam para ele).
+                        focus::first_in(view::SETTINGS_FIELDS)
                     }
-                    Err(e) => self.notify_error(e),
+                    Err(e) => {
+                        self.notify_error(e);
+                        Task::none()
+                    }
                 }
-                Task::none()
             }
             Message::SettingsField(..)
             | Message::SettingsSslMode(_)
@@ -2014,6 +2019,7 @@ impl App {
         } else {
             Task::none()
         };
+        let mut focus = Task::none();
         if created {
             match config_editor::Document::open(&canonical, 0) {
                 Ok(doc) => {
@@ -2023,11 +2029,12 @@ impl App {
                         show_password: false,
                         test: None,
                     });
+                    focus = focus::first_in(view::SETTINGS_FIELDS);
                 }
                 Err(e) => self.notify_error(e),
             }
         }
-        Task::batch([reload, select])
+        Task::batch([reload, select, focus])
     }
 
     // ------------------------------------------------------------------
@@ -2683,6 +2690,18 @@ impl App {
                 _ => {}
             }
             return Task::none();
+        }
+        if let Some(Modal::EditWorkspace { doc, .. }) = &self.modal {
+            match key.as_ref() {
+                // Tab/Shift+Tab percorrem só os campos do diálogo.
+                Key::Named(key::Named::Tab) if !modifiers.control() => {
+                    return focus::cycle(view::SETTINGS_FIELDS, !modifiers.shift());
+                }
+                Key::Named(key::Named::Enter) if modifiers.is_empty() && doc.can_save() => {
+                    return self.save_workspace_settings();
+                }
+                _ => {}
+            }
         }
         if let Some(modal) = &self.modal {
             // Esc não descarta alterações feitas no editor de configurações.

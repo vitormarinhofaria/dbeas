@@ -20,6 +20,8 @@ está focado. Fora do editor, só disparam se nenhum widget capturou a tecla.
 | ↑/↓ (lista aberta) | Ativa a lista e navega entre as sugestões |
 | Enter/Tab (lista ativa) | Aceita a sugestão; com a lista só como dica, mantêm o comportamento normal |
 | Esc (lista aberta) | Fecha as sugestões |
+| Tab / Shift+Tab (editor do dbeas.json) | Próximo/anterior campo, circular |
+| Enter (editor do dbeas.json) | Salvar, se houver alterações válidas |
 
 ## Conflitos documentados
 
