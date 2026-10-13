@@ -9,6 +9,10 @@ metadados em `[package.metadata.deb]` no `Cargo.toml`.
   (`packaging/Dockerfile.deb`). O `Depends` gerado pede `libc6 >= 2.35`, e o
   pacote foi instalado sem bibliotecas faltando em **Ubuntu 22.04, Ubuntu 24.04
   e Debian 12** (containers limpos, 2026-10-13). Saída: `target/debian/dbeas_<versão>-1_amd64.deb`.
+- Verificação: instalar com `apt-get install --no-install-recommends ./…deb` em
+  container limpo, conferir `ldd` e as libs de dlopen (`ldconfig -p`). Sem display
+  o binário entra em panic ao criar o event loop (esperado). Com `xvfb` e
+  `DISPLAY=:99`, a janela abre e o app segue rodando (Ubuntu 22.04, 2026-10-13).
 - `scripts/package-deb.sh --local`: usa o toolchain da máquina. O `Depends` passa
   a exigir a glibc da máquina (no Ubuntu 26.04, `libc6 >= 2.43`), então só serve
   para uso local.
