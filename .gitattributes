@@ -1,2 +1,13 @@
-# Scripts de shell precisam de LF mesmo em checkout no Windows (shebang quebra com CRLF).
-*.sh text eol=lf
+# Padrão: Git detecta texto e normaliza para LF no repositório e no checkout.
+* text=auto eol=lf
+
+# Scripts do Windows precisam de CRLF.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binários nunca são convertidos.
+*.png binary
+*.ico binary
+*.ttf binary
+*.otf binary
