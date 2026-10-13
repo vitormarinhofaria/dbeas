@@ -144,6 +144,10 @@ pub enum Modal {
     AddWorkspace {
         path: String,
         error: Option<String>,
+        /// Interpretação de `path`; decide entre "Adicionar" e "Criar".
+        target: workspace::add::Target,
+        /// Pedindo confirmação para criar o arquivo de `target`.
+        confirm: bool,
     },
     RemoveWorkspace {
         file: PathBuf,
@@ -195,8 +199,11 @@ pub enum Message {
     OpenAddWorkspace,
     AddPathChanged(String),
     BrowseWorkspaceFile,
-    BrowsedWorkspaceFile(Option<PathBuf>),
+    BrowseWorkspaceDir,
+    BrowsedWorkspacePath(Option<PathBuf>),
     SubmitAddWorkspace,
+    /// Volta da confirmação de criação para a edição do caminho.
+    CancelCreateWorkspace,
     AskRemoveWorkspace(usize),
     ConfirmRemoveWorkspace,
     OpenWorkspaceSettings(usize),
@@ -580,14 +587,13 @@ impl App {
                 self.modal = Some(Modal::AddWorkspace {
                     path: String::new(),
                     error: None,
+                    target: workspace::add::resolve(""),
+                    confirm: false,
                 });
                 Task::none()
             }
             Message::AddPathChanged(value) => {
-                if let Some(Modal::AddWorkspace { path, error }) = &mut self.modal {
-                    *path = value;
-                    *error = None;
-                }
+                self.set_add_path(value);
                 Task::none()
             }
             Message::BrowseWorkspaceFile => Task::perform(
@@ -599,14 +605,27 @@ impl App {
                         .await
                         .map(|f| f.path().to_path_buf())
                 },
-                Message::BrowsedWorkspaceFile,
+                Message::BrowsedWorkspacePath,
             ),
-            Message::BrowsedWorkspaceFile(picked) => {
-                if let (Some(p), Some(Modal::AddWorkspace { path, error })) =
-                    (picked, &mut self.modal)
-                {
-                    *path = p.display().to_string();
-                    *error = None;
+            Message::BrowseWorkspaceDir => Task::perform(
+                async {
+                    rfd::AsyncFileDialog::new()
+                        .set_title("Selecione o diretório do dbeas.json")
+                        .pick_folder()
+                        .await
+                        .map(|f| f.path().to_path_buf())
+                },
+                Message::BrowsedWorkspacePath,
+            ),
+            Message::BrowsedWorkspacePath(picked) => {
+                if let Some(p) = picked {
+                    self.set_add_path(p.display().to_string());
+                }
+                Task::none()
+            }
+            Message::CancelCreateWorkspace => {
+                if let Some(Modal::AddWorkspace { confirm, .. }) = &mut self.modal {
+                    *confirm = false;
                 }
                 Task::none()
             }
@@ -1808,20 +1827,55 @@ impl App {
         })
     }
 
-    fn add_workspace(&mut self) -> Task<Message> {
-        let Some(Modal::AddWorkspace { path, error }) = &mut self.modal else {
-            return Task::none();
-        };
-        let raw = path.trim();
-        let expanded = match raw.strip_prefix("~/") {
-            Some(rest) => dirs::home_dir().unwrap_or_default().join(rest),
-            None => PathBuf::from(raw),
-        };
-        if raw.is_empty() || !expanded.is_file() {
-            *error = Some("Informe o caminho de um arquivo dbeas.json existente.".into());
-            return Task::none();
+    fn set_add_path(&mut self, value: String) {
+        if let Some(Modal::AddWorkspace {
+            path,
+            error,
+            target,
+            confirm,
+        }) = &mut self.modal
+        {
+            *target = workspace::add::resolve(&value);
+            *path = value;
+            *error = None;
+            *confirm = false;
         }
-        if !self.settings.register(&expanded) {
+    }
+
+    /// Registra o `dbeas.json` informado. Se ele ainda não existe, pede
+    /// confirmação, cria o arquivo e abre o editor gráfico da entrada criada.
+    fn add_workspace(&mut self) -> Task<Message> {
+        let Some(Modal::AddWorkspace {
+            error,
+            target,
+            confirm,
+            ..
+        }) = &mut self.modal
+        else {
+            return Task::none();
+        };
+        let (file, created) = match target {
+            workspace::add::Target::Invalid(message) => {
+                *error = Some(message.clone());
+                return Task::none();
+            }
+            workspace::add::Target::Create(_) if !*confirm => {
+                *confirm = true;
+                return Task::none();
+            }
+            workspace::add::Target::Create(file) => {
+                if let Err(e) = workspace::add::create(file) {
+                    *error = Some(e);
+                    *confirm = false;
+                    return Task::none();
+                }
+                (file.clone(), true)
+            }
+            workspace::add::Target::Existing(file) => (file.clone(), false),
+        };
+        // Um arquivo recém-criado pode já estar registrado (foi apagado do
+        // disco depois de registrado): basta recarregar.
+        if !self.settings.register(&file) && !created {
             *error = Some("Este arquivo já está registrado.".into());
             return Task::none();
         }
@@ -1831,8 +1885,8 @@ impl App {
         }
         let before = self.workspaces.len();
         let reload = self.reload_workspaces();
+        let canonical = crate::fsutil::canonical_or_normalized(&file);
         let select = if self.workspaces.len() > before {
-            let canonical = crate::fsutil::canonical_or_normalized(&expanded);
             match self
                 .workspaces
                 .iter()
@@ -1844,6 +1898,18 @@ impl App {
         } else {
             Task::none()
         };
+        if created {
+            match config_editor::Form::open(&canonical, 0) {
+                Ok(form) => {
+                    self.modal = Some(Modal::EditWorkspace {
+                        form: Box::new(form),
+                        error: None,
+                        show_password: false,
+                    });
+                }
+                Err(e) => self.notify_error(e),
+            }
+        }
         Task::batch([reload, select])
     }
 

@@ -106,6 +106,8 @@ futura. Autocomplete automático (após `.` e 2+ letras) e por Ctrl+Espaço.
    move para a lixeira. Ainda não está descrito na spec.
 5c. ~~Editor gráfico do `dbeas.json`~~ — feito em 2026-10-13 (ver
    [editor gráfico](../configuracao/editor-grafico.md)). Não está na spec.
+5d. ~~Criar `dbeas.json` pelo diálogo de adicionar workspace~~ — feito em
+   2026-10-13 (ver [adicionar ou criar](../usabilidade/adicionar-criar-workspace.md)).
 6. Melhorias conhecidas: o editor não rola horizontalmente (sem quebra de linha,
    linhas longas ficam cortadas); `timestamptz` é exibido em UTC; a altura usada no
    arraste do divisor é aproximada (`CHROME_HEIGHT`).
@@ -129,4 +131,5 @@ futura. Autocomplete automático (após `.` e 2+ letras) e por Ctrl+Espaço.
 - [Arquivos SQL](../usabilidade/arquivos-sql.md)
 - [TLS](../arquitetura/tls.md)
 - [Editor gráfico do dbeas.json](../configuracao/editor-grafico.md)
+- [Adicionar ou criar workspace](../usabilidade/adicionar-criar-workspace.md)
 - [Editor inteligente](../arquitetura/editor-inteligente.md)

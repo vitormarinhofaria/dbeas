@@ -4,6 +4,7 @@
 //! Workspaces: carregamento dos `dbeas.json` registrados, identificação e
 //! nomes exibidos (spec §3, §4.1).
 
+pub mod add;
 pub mod config;
 pub mod editor;
 pub mod env;

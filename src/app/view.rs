@@ -18,6 +18,7 @@ use crate::data_grid::{self, GridView};
 use crate::metadata::RelationKind;
 use crate::session::{ExplorerMode, TabKind};
 use crate::sql_editor::{self, EditorView};
+use crate::workspace::add;
 use crate::workspace::editor::{Field, Form, Preview};
 
 /// Deslocamento horizontal da barra lateral em relação à janela.
@@ -686,16 +687,26 @@ impl App {
             ]
             .spacing(10)
             .into(),
-            Modal::AddWorkspace { path, error } => {
+            Modal::AddWorkspace {
+                path,
+                error,
+                target,
+                confirm,
+            } => {
+                let creating = match target {
+                    add::Target::Create(file) => Some(file),
+                    _ => None,
+                };
                 let mut col = column![
                     text("Adicionar workspace").size(18).font(BOLD),
-                    text("Caminho do arquivo dbeas.json. O arquivo é registrado uma única vez em ~/.config/dbeas/config.").size(13).style(muted),
+                    text("Caminho de um dbeas.json ou do diretório dele. Sem dbeas.json, ele é criado. O arquivo é registrado uma única vez em ~/.config/dbeas/config.").size(13).style(muted),
                     row![
-                        text_input("/caminho/do/projeto/dbeas.json", path)
+                        text_input("/caminho/do/projeto", path)
                             .on_input(Message::AddPathChanged)
                             .on_submit(Message::SubmitAddWorkspace)
                             .width(Length::Fill),
-                        button(text("Procurar…")).on_press(Message::BrowseWorkspaceFile).style(button::secondary),
+                        button(text("Arquivo…")).on_press(Message::BrowseWorkspaceFile).style(button::secondary),
+                        button(text("Diretório…")).on_press(Message::BrowseWorkspaceDir).style(button::secondary),
                     ]
                     .spacing(8),
                 ]
@@ -703,17 +714,30 @@ impl App {
                 if let Some(e) = error {
                     col = col.push(text(e).size(13).style(danger_text));
                 }
-                col.push(
-                    row![
+                let buttons = match creating {
+                    Some(file) if *confirm => {
+                        let name = file.file_name().unwrap_or_default().to_string_lossy();
+                        let dir = file.parent().unwrap_or(file);
+                        row![
+                            text(format!("Deseja criar {name} em {}?", dir.display()))
+                                .size(13)
+                                .width(Length::Fill),
+                            button(text("Voltar"))
+                                .on_press(Message::CancelCreateWorkspace)
+                                .style(button::secondary),
+                            button(text("Criar")).on_press(Message::SubmitAddWorkspace),
+                        ]
+                    }
+                    _ => row![
                         space::horizontal(),
                         button(text("Cancelar"))
                             .on_press(Message::CloseModal)
                             .style(button::secondary),
-                        button(text("Adicionar")).on_press(Message::SubmitAddWorkspace),
-                    ]
-                    .spacing(8),
-                )
-                .into()
+                        button(text(if creating.is_some() { "Criar" } else { "Adicionar" }))
+                            .on_press(Message::SubmitAddWorkspace),
+                    ],
+                };
+                col.push(buttons.spacing(8).align_y(Alignment::Center)).into()
             }
             Modal::EditWorkspace {
                 form,

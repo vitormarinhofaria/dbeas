@@ -34,6 +34,7 @@ decidido.
 - [Conexões TLS](arquitetura/tls.md) — sslMode/sslRootCert, rustls+ring, selo de TLS e `scripts/test-tls.sh` (containers sem porta, Docker rootless).
 - [Regras do dbeas.json](configuracao/dbeas-json.md) — validação, interpolação e padrões como implementados.
 - [Editor gráfico do dbeas.json](configuracao/editor-grafico.md) — ícone ⚙ na sidebar, prévias de `${env.X}` (senha só com asteriscos), gravação que preserva o arquivo.
+- [Adicionar ou criar workspace](usabilidade/adicionar-criar-workspace.md) — botão Adicionar vira Criar para diretório sem dbeas.json ou caminho novo; confirma e abre o editor.
 - [Atalhos](usabilidade/atalhos.md) — mapa central e conflitos documentados.
 - [Transações (requireTransaction)](usabilidade/transacoes.md) — transação manual com botões; grade, SQL manual e arquivos participam; resumo antes do COMMIT.
 - [Edição de dados](usabilidade/edicao-dados.md) — quando um resultado é editável, interação, Ctrl+S/Ctrl+Shift+S, execução parametrizada.
