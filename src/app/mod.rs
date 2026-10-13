@@ -5,6 +5,7 @@
 
 mod focus;
 mod quick_open;
+mod right_click;
 mod state;
 mod view;
 
@@ -56,7 +57,12 @@ pub struct App {
     workspaces: Vec<Workspace>,
     active: Option<usize>,
     sidebar_width: f32,
+    window_width: f32,
     window_height: f32,
+    /// Posição do último clique direito, para abrir menus de contexto no cursor.
+    last_right_click: Point,
+    /// Menu de contexto aberto sobre uma aba do workspace ativo.
+    tab_menu: Option<TabMenu>,
     drag: Option<Drag>,
     modal: Option<Modal>,
     quick_open: Option<QuickOpen>,
@@ -70,6 +76,22 @@ pub struct App {
     pending_execution: Option<PendingExecution>,
     /// Janela cujo fechamento foi pedido, enquanto há transação a resolver.
     closing_window: Option<window::Id>,
+}
+
+/// Menu de contexto de uma aba (clique direito).
+pub struct TabMenu {
+    pub tab_id: u64,
+    /// Canto superior esquerdo do menu, em coordenadas da janela.
+    pub at: Point,
+}
+
+/// Ações do menu de contexto das abas.
+#[derive(Debug, Clone, Copy)]
+pub enum TabMenuAction {
+    Close,
+    CloseLeft,
+    CloseRight,
+    CloseAll,
 }
 
 #[derive(Debug, Clone)]
@@ -164,9 +186,12 @@ pub enum Modal {
         /// Teste de conexão da aba exibida; descartado ao editar ou trocar de aba.
         test: Option<ConnTest>,
     },
+    /// Fechamento de abas com alterações não salvas. `tab_ids` são todas as
+    /// abas a fechar (inclusive as sem alterações), `dirty` os títulos das
+    /// que têm alterações.
     CloseTab {
-        tab_id: u64,
-        title: String,
+        tab_ids: Vec<u64>,
+        dirty: Vec<String>,
     },
     Shortcuts,
 }
@@ -285,6 +310,10 @@ pub enum Message {
     SelectTab(usize),
     CloseTab(usize),
     ConfirmCloseTab(CloseChoice),
+    RightClickAt(Point),
+    TabMenu(usize),
+    TabMenuAction(TabMenuAction),
+    CloseTabMenu,
     Editor(text_editor::Action),
     EditorScrolled(Viewport),
     GridScrolled(Viewport),
@@ -393,7 +422,10 @@ impl App {
             session,
             workspaces: Vec::new(),
             active: None,
+            window_width: 1400.0,
             window_height: 860.0,
+            last_right_click: Point::ORIGIN,
+            tab_menu: None,
             drag: None,
             modal: None,
             quick_open: None,
@@ -534,6 +566,9 @@ impl App {
                 | Message::KeyPressed { .. }
                 | Message::CloseFileMenu
                 | Message::FileMenu(_)
+                | Message::RightClickAt(_)
+                | Message::TabMenu(_)
+                | Message::CloseTabMenu
         ) {
             self.session_dirty = true;
         }
@@ -1287,16 +1322,66 @@ impl App {
             }
             Message::CloseTab(index) => self.request_close_tab(index),
             Message::ConfirmCloseTab(choice) => {
-                let Some(Modal::CloseTab { tab_id, .. }) = self.modal.take() else {
+                let Some(Modal::CloseTab { tab_ids, .. }) = self.modal.take() else {
                     return Task::none();
                 };
-                match choice {
-                    CloseChoice::Discard => {
-                        self.close_tab_by_id(tab_id);
-                        Task::none()
+                let mut tasks = Vec::new();
+                for id in tab_ids {
+                    let dirty = self
+                        .active_ws()
+                        .and_then(|w| w.tab_index(id).map(|i| w.tabs[i].dirty))
+                        .unwrap_or(false);
+                    match choice {
+                        CloseChoice::Save if dirty => tasks.push(self.save_tab(id, true)),
+                        _ => self.close_tab_by_id(id),
                     }
-                    CloseChoice::Save => self.save_tab(tab_id, true),
                 }
+                Task::batch(tasks)
+            }
+            Message::RightClickAt(position) => {
+                self.last_right_click = position;
+                Task::none()
+            }
+            Message::TabMenu(index) => {
+                let Some(ws) = self.active_ws() else {
+                    return Task::none();
+                };
+                let Some(tab) = ws.tabs.get(index) else {
+                    return Task::none();
+                };
+                // Mantém o menu inteiro dentro da janela.
+                let at = Point::new(
+                    self.last_right_click
+                        .x
+                        .min(self.window_width - view::TAB_MENU_WIDTH - 4.0)
+                        .max(0.0),
+                    self.last_right_click.y,
+                );
+                self.tab_menu = Some(TabMenu { tab_id: tab.id, at });
+                Task::none()
+            }
+            Message::CloseTabMenu => {
+                self.tab_menu = None;
+                Task::none()
+            }
+            Message::TabMenuAction(action) => {
+                let Some(menu) = self.tab_menu.take() else {
+                    return Task::none();
+                };
+                let Some(ws) = self.active_ws() else {
+                    return Task::none();
+                };
+                let Some(index) = ws.tab_index(menu.tab_id) else {
+                    return Task::none();
+                };
+                let ids = ws
+                    .tabs
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, t)| !t.is_scratch() && action.includes(index, *i))
+                    .map(|(_, t)| t.id)
+                    .collect();
+                self.request_close_tabs(ids)
             }
             Message::Editor(action) => self.editor_action(action),
             Message::EditorScrolled(viewport) => {
@@ -1650,6 +1735,7 @@ impl App {
                 Task::none()
             }
             Message::WindowResized(size) => {
+                self.window_width = size.width;
                 self.window_height = size.height;
                 Task::none()
             }
@@ -2153,15 +2239,30 @@ impl App {
             self.notify("O Scratch não pode ser fechado");
             return Task::none();
         }
-        if tab.dirty {
-            self.modal = Some(Modal::CloseTab {
-                tab_id: tab.id,
-                title: tab.title(),
-            });
+        let id = tab.id;
+        self.request_close_tabs(vec![id])
+    }
+
+    /// Fecha as abas indicadas do workspace ativo. Se alguma tiver alterações
+    /// não salvas, pergunta antes uma única vez por todas; cancelar não fecha
+    /// nenhuma.
+    fn request_close_tabs(&mut self, tab_ids: Vec<u64>) -> Task<Message> {
+        let Some(ws) = self.active_ws() else {
+            return Task::none();
+        };
+        let dirty: Vec<String> = ws
+            .tabs
+            .iter()
+            .filter(|t| t.dirty && tab_ids.contains(&t.id))
+            .map(|t| t.title())
+            .collect();
+        if !dirty.is_empty() {
+            self.modal = Some(Modal::CloseTab { tab_ids, dirty });
             return Task::none();
         }
-        let id = tab.id;
-        self.close_tab_by_id(id);
+        for id in tab_ids {
+            self.close_tab_by_id(id);
+        }
         Task::none()
     }
 
@@ -2703,6 +2804,11 @@ impl App {
                 _ => {}
             }
         }
+        // Qualquer tecla fecha o menu de contexto das abas; Esc só fecha.
+        if self.tab_menu.take().is_some() && matches!(key.as_ref(), Key::Named(key::Named::Escape))
+        {
+            return Task::none();
+        }
         if let Some(modal) = &self.modal {
             // Esc não descarta alterações feitas no editor de configurações.
             let keeps_edits = matches!(modal, Modal::EditWorkspace { doc, .. } if doc.is_dirty());
@@ -2759,6 +2865,7 @@ fn closes_file_menu(message: &Message) -> bool {
         Message::Editor(_)
             | Message::SelectTab(_)
             | Message::CloseTab(_)
+            | Message::TabMenu(_)
             | Message::SelectWorkspace(_)
             | Message::SetExplorer(_)
             | Message::NavigateDir(_)
@@ -3452,4 +3559,16 @@ fn schedule_diagnostics(ws: WorkspaceId, tab: u64, rev: u64) -> Task<Message> {
             rev,
         }
     })
+}
+
+impl TabMenuAction {
+    /// Se a aba na posição `index` é fechada pela ação disparada na aba `clicked`.
+    fn includes(self, clicked: usize, index: usize) -> bool {
+        match self {
+            TabMenuAction::Close => index == clicked,
+            TabMenuAction::CloseLeft => index < clicked,
+            TabMenuAction::CloseRight => index > clicked,
+            TabMenuAction::CloseAll => true,
+        }
+    }
 }

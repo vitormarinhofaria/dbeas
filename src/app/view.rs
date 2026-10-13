@@ -4,14 +4,16 @@
 //! Renderização da janela principal.
 
 use iced::widget::{
-    Column, Space, button, center, checkbox, column, container, mouse_area, opaque, pick_list, row,
-    rule, scrollable, space, stack, text, text_input, tooltip,
+    Column, Space, button, center, checkbox, column, container, mouse_area, opaque, pick_list, pin,
+    row, rule, scrollable, space, stack, text, text_input, tooltip,
 };
 use iced::{Alignment, Color, Element, Font, Length, Theme, mouse};
 
+use super::right_click::right_click;
+
 use super::quick_open::{QuickOpen, Target};
 use super::state::{Tab, Workspace};
-use super::{App, CloseChoice, DragTarget, Message, Modal};
+use super::{App, CloseChoice, DragTarget, Message, Modal, TabMenu, TabMenuAction};
 use crate::commands::{Command, SHORTCUTS};
 use crate::connection::{self, Probe, Status, TxState};
 use crate::data_grid::{self, GridView};
@@ -26,6 +28,8 @@ pub const WORKSPACE_STRIP_WIDTH: f32 = 0.0;
 /// Altura aproximada de cabeçalho, abas, barra de ferramentas e status, usada
 /// para converter o arraste do divisor em proporção.
 pub const CHROME_HEIGHT: f32 = 170.0;
+/// Largura do menu de contexto das abas.
+pub const TAB_MENU_WIDTH: f32 = 200.0;
 
 const BOLD: Font = Font {
     weight: iced::font::Weight::Bold,
@@ -93,7 +97,12 @@ impl App {
             }),
             None => Space::new().into(),
         };
-        stack![base, layer].into()
+        // Camada própria e sempre presente, pelo mesmo motivo acima.
+        let menu: Element<'_, Message> = match self.tab_menu.as_ref() {
+            Some(menu) => self.tab_menu_view(menu),
+            None => Space::new().into(),
+        };
+        stack![base, layer, menu].into()
     }
 
     // ------------------------------------------------------------------
@@ -245,20 +254,92 @@ impl App {
                 );
             }
             tabs = tabs.push(
-                button(content)
-                    .on_press(Message::SelectTab(i))
-                    .padding([4, 10])
-                    .style(move |theme: &Theme, status| tab_style(theme, status, active)),
+                mouse_area(
+                    button(content)
+                        .on_press(Message::SelectTab(i))
+                        .padding([4, 10])
+                        .style(move |theme: &Theme, status| tab_style(theme, status, active)),
+                )
+                .on_right_press(Message::TabMenu(i)),
             );
         }
-        container(
-            scrollable(tabs).direction(scrollable::Direction::Horizontal(
-                scrollable::Scrollbar::new().width(4).scroller_width(4),
-            )),
+        // O clique direito é capturado fora do `scrollable`, onde a posição
+        // do cursor está em coordenadas da janela.
+        right_click(
+            container(
+                scrollable(tabs).direction(scrollable::Direction::Horizontal(
+                    scrollable::Scrollbar::new().width(4).scroller_width(4),
+                )),
+            )
+            .padding([0, 8])
+            .width(Length::Fill),
+            Message::RightClickAt,
         )
-        .padding([0, 8])
-        .width(Length::Fill)
         .into()
+    }
+
+    /// Menu de contexto de uma aba, no ponto do clique. Clicar fora fecha.
+    fn tab_menu_view(&self, menu: &TabMenu) -> Element<'_, Message> {
+        let Some(ws) = self.active_ws() else {
+            return Space::new().into();
+        };
+        let Some(clicked) = ws.tab_index(menu.tab_id) else {
+            return Space::new().into();
+        };
+        let entry = |label: &'static str, action: TabMenuAction| {
+            let enabled = ws
+                .tabs
+                .iter()
+                .enumerate()
+                .any(|(i, t)| !t.is_scratch() && action.includes(clicked, i));
+            button(text(label).size(13))
+                .on_press_maybe(enabled.then_some(Message::TabMenuAction(action)))
+                .width(Length::Fill)
+                .padding([4, 10])
+                .style(move |theme: &Theme, status| {
+                    let p = theme.extended_palette();
+                    button::Style {
+                        background: matches!(status, button::Status::Hovered)
+                            .then(|| p.background.weak.color.into()),
+                        text_color: if matches!(status, button::Status::Disabled) {
+                            p.background.strong.color
+                        } else {
+                            p.background.base.text
+                        },
+                        ..button::Style::default()
+                    }
+                })
+        };
+        let content = container(
+            column![
+                entry("Fechar aba", TabMenuAction::Close),
+                entry("Fechar abas à esquerda", TabMenuAction::CloseLeft),
+                entry("Fechar abas à direita", TabMenuAction::CloseRight),
+                entry("Fechar tudo", TabMenuAction::CloseAll),
+            ]
+            .width(TAB_MENU_WIDTH),
+        )
+        .padding(2)
+        .style(|theme: &Theme| {
+            let p = theme.extended_palette();
+            container::Style {
+                background: Some(p.background.weaker.color.into()),
+                border: iced::Border {
+                    color: p.background.strong.color,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..container::Style::default()
+            }
+        });
+        opaque(
+            mouse_area(stack![
+                Space::new().width(Length::Fill).height(Length::Fill),
+                pin(opaque(content)).x(menu.at.x).y(menu.at.y),
+            ])
+            .on_press(Message::CloseTabMenu)
+            .on_right_press(Message::CloseTabMenu),
+        )
     }
 
     fn tab_content(&self) -> Element<'_, Message> {
@@ -775,9 +856,13 @@ impl App {
             ]
             .spacing(10)
             .into(),
-            Modal::CloseTab { title, .. } => column![
+            Modal::CloseTab { dirty, .. } => column![
                 text("Alterações não salvas").size(18).font(BOLD),
-                text(format!("{title} tem alterações não salvas.")).size(13),
+                text(match dirty.as_slice() {
+                    [title] => format!("{title} tem alterações não salvas."),
+                    titles => format!("Têm alterações não salvas: {}.", titles.join(", ")),
+                })
+                .size(13),
                 row![
                     space::horizontal(),
                     button(text("Cancelar"))

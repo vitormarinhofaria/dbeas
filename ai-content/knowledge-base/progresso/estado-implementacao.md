@@ -36,6 +36,7 @@ Atualize ao fim de cada etapa.
 | Catálogo (schemas, tabelas, views, mat. views, colunas, PK, funções, sequências) | pronto, testado com PG | `src/metadata.rs` |
 | UI: sidebar de workspaces com estado, exploradores Tabelas/Objetos/Arquivos | pronto, verificado visualmente | `src/app/view.rs` |
 | Abas por workspace, Scratch fixo, fechar com confirmação se arquivo sujo | pronto | `src/app/mod.rs` |
+| Menu de contexto das abas (fechar aba/à esquerda/à direita/tudo) | pronto, não verificado no app | `src/app/right_click.rs`, `src/app/view.rs` |
 | Editor: highlight (syntect), números de linha, linha do erro marcada, atalhos | pronto | `src/sql_editor.rs` |
 | Grade virtualizada, paginação (500/página, teto de 20 000 linhas) | pronto, verificado visualmente | `src/data_grid.rs` |
 | Divisores arrastáveis (sidebar e resultados/editor) | implementado, não verificado por arraste | `src/app/mod.rs` |
