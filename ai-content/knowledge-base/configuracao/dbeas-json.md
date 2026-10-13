@@ -25,3 +25,5 @@ Referência: spec §3; código em `src/workspace/config.rs`.
   configuração; aceitam `${env.NOME}`.
 - Mensagens de erro nunca incluem valores resolvidos; `Secret` oculta a senha em
   `Debug`. Erros de JSON/`.env` não repetem o conteúdo da linha.
+- Edição pela interface: ver [editor gráfico](editor-grafico.md). A validação
+  dele usa o mesmo `resolve_entry`, então as regras acima valem igualmente.

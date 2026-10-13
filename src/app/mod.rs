@@ -29,6 +29,7 @@ use crate::query::{Outcome, QueryError, split};
 use crate::session::{self, ExplorerMode, Session, TabKind};
 use crate::settings::{self, Settings};
 use crate::sql_editor;
+use crate::workspace::editor::{self as config_editor, SslChoice};
 use crate::workspace::{self, WorkspaceId};
 
 use quick_open::QuickOpen;
@@ -148,6 +149,12 @@ pub enum Modal {
         file: PathBuf,
         names: Vec<String>,
     },
+    /// Edição gráfica de uma entrada do `dbeas.json`.
+    EditWorkspace {
+        form: Box<config_editor::Form>,
+        error: Option<String>,
+        show_password: bool,
+    },
     CloseTab {
         tab_id: u64,
         title: String,
@@ -192,6 +199,17 @@ pub enum Message {
     SubmitAddWorkspace,
     AskRemoveWorkspace(usize),
     ConfirmRemoveWorkspace,
+    OpenWorkspaceSettings(usize),
+    SettingsField(config_editor::Field, String),
+    SettingsSslMode(SslChoice),
+    SettingsEnvKey(usize, String),
+    SettingsEnvValue(usize, String),
+    SettingsEnvAdd,
+    SettingsEnvRemove(usize),
+    SettingsReadOnly(bool),
+    SettingsRequireTransaction(bool),
+    SettingsTogglePassword,
+    SettingsSave,
 
     // Transações
     TxBegin(WorkspaceId),
@@ -620,6 +638,64 @@ impl App {
                     .retain(|id, _| !id.0.starts_with(&prefix));
                 self.reload_workspaces()
             }
+            Message::OpenWorkspaceSettings(index) => {
+                let Some(ws) = self.workspaces.get(index) else {
+                    return Task::none();
+                };
+                let Some(entry) = ws.desc.entry else {
+                    let error = ws.desc.config.as_ref().err().map(ToString::to_string);
+                    self.notify_error(format!(
+                        "O arquivo não pôde ser lido como dbeas.json; corrija-o num editor de texto{}",
+                        error.map(|e| format!(": {e}")).unwrap_or_default()
+                    ));
+                    return Task::none();
+                };
+                match config_editor::Form::open(&ws.desc.file, entry) {
+                    Ok(form) => {
+                        self.modal = Some(Modal::EditWorkspace {
+                            form: Box::new(form),
+                            error: None,
+                            show_password: false,
+                        });
+                    }
+                    Err(e) => self.notify_error(e),
+                }
+                Task::none()
+            }
+            Message::SettingsField(..)
+            | Message::SettingsSslMode(_)
+            | Message::SettingsEnvKey(..)
+            | Message::SettingsEnvValue(..)
+            | Message::SettingsEnvAdd
+            | Message::SettingsEnvRemove(_)
+            | Message::SettingsReadOnly(_)
+            | Message::SettingsRequireTransaction(_)
+            | Message::SettingsTogglePassword => {
+                if let Some(Modal::EditWorkspace {
+                    form,
+                    error,
+                    show_password,
+                }) = &mut self.modal
+                {
+                    *error = None;
+                    match message {
+                        Message::SettingsField(field, value) => form.set(field, value),
+                        Message::SettingsSslMode(choice) => {
+                            form.set(config_editor::Field::SslMode, choice.0)
+                        }
+                        Message::SettingsEnvKey(row, key) => form.set_env_key(row, key),
+                        Message::SettingsEnvValue(row, value) => form.set_env_value(row, value),
+                        Message::SettingsEnvAdd => form.add_env(),
+                        Message::SettingsEnvRemove(row) => form.remove_env(row),
+                        Message::SettingsReadOnly(v) => form.set_read_only(v),
+                        Message::SettingsRequireTransaction(v) => form.set_require_transaction(v),
+                        Message::SettingsTogglePassword => *show_password = !*show_password,
+                        _ => {}
+                    }
+                }
+                Task::none()
+            }
+            Message::SettingsSave => self.save_workspace_settings(),
 
             Message::TxBegin(id) => self.tx_command(&id, TxCommand::Begin),
             Message::TxRollback(id) => {
@@ -1525,7 +1601,17 @@ impl App {
     /// Recarrega todos os `dbeas.json` registrados, preservando o estado em
     /// execução dos workspaces que continuam existindo.
     fn reload_workspaces(&mut self) -> Task<Message> {
-        let active_id = self.active_ws().map(|w| w.desc.id.clone());
+        self.reload_workspaces_keeping(None)
+    }
+
+    /// Como `reload_workspaces`; `edited` (arquivo e posição da entrada) é a
+    /// entrada gravada pelo editor de configurações, que mantém abas, conexão
+    /// e sessão mesmo que o `name` (parte do id) tenha mudado.
+    fn reload_workspaces_keeping(
+        &mut self,
+        edited: Option<(&std::path::Path, usize)>,
+    ) -> Task<Message> {
+        let mut active_id = self.active_ws().map(|w| w.desc.id.clone());
         for ws in &self.workspaces {
             self.session
                 .workspaces
@@ -1535,9 +1621,31 @@ impl App {
         let mut previous = std::mem::take(&mut self.workspaces);
         let mut tasks = Vec::new();
         for desc in workspace::load_all(&self.settings.workspaces) {
-            match previous.iter().position(|w| w.desc.id == desc.id) {
+            let same_entry = |w: &Workspace| {
+                edited.is_some_and(|(file, entry)| {
+                    w.desc.file == file
+                        && w.desc.entry == Some(entry)
+                        && desc.entry == Some(entry)
+                        && desc.file == file
+                })
+            };
+            let found = previous
+                .iter()
+                .position(|w| w.desc.id == desc.id)
+                .or_else(|| previous.iter().position(same_entry));
+            match found {
                 Some(i) => {
                     let mut ws = previous.swap_remove(i);
+                    if ws.desc.id != desc.id {
+                        let old = ws.desc.id.clone();
+                        self.session.workspaces.remove(&old);
+                        if let Some(files) = self.sql_files.remove(&old) {
+                            self.sql_files.insert(desc.id.clone(), files);
+                        }
+                        if active_id.as_ref() == Some(&old) {
+                            active_id = Some(desc.id.clone());
+                        }
+                    }
                     ws.desc = desc;
                     self.workspaces.push(ws);
                 }
@@ -1564,6 +1672,70 @@ impl App {
             } else {
                 Some(0)
             });
+        Task::batch(tasks)
+    }
+
+    /// Grava o formulário do editor de configurações e recarrega os
+    /// workspaces. Uma conexão aberta continua com a configuração antiga até
+    /// ser refeita (pode haver transação em andamento).
+    fn save_workspace_settings(&mut self) -> Task<Message> {
+        let Some(Modal::EditWorkspace { form, error, .. }) = &mut self.modal else {
+            return Task::none();
+        };
+        if let Err(e) = form.save() {
+            *error = Some(e);
+            return Task::none();
+        }
+        let (file, entry) = (form.file.clone(), form.index);
+        self.modal = None;
+
+        let same = |w: &Workspace| w.desc.file == file && w.desc.entry == Some(entry);
+        let before = self
+            .workspaces
+            .iter()
+            .find(|w| same(w))
+            .map(|w| w.desc.config.clone());
+        let reload = self.reload_workspaces_keeping(Some((&file, entry)));
+
+        let mut tasks = vec![reload];
+        let active = self.active;
+        if let Some((i, ws)) = self
+            .workspaces
+            .iter_mut()
+            .enumerate()
+            .find(|(_, w)| same(w))
+        {
+            let changed = before.as_ref().is_some_and(|b| match (b, &ws.desc.config) {
+                (Ok(a), Ok(b)) => a != b,
+                (a, b) => a.is_ok() != b.is_ok(),
+            });
+            let old_dir = before
+                .as_ref()
+                .and_then(|b| b.as_ref().ok())
+                .and_then(|c| c.sql_files_dir.clone());
+            let new_dir = ws
+                .desc
+                .config
+                .as_ref()
+                .ok()
+                .and_then(|c| c.sql_files_dir.clone());
+            if old_dir != new_dir {
+                ws.files = state::FilesState::default();
+                self.sql_files.remove(&ws.desc.id);
+                if active == Some(i) && ws.explorer == ExplorerMode::Files {
+                    tasks.push(self.list_files(None));
+                }
+            }
+            let ws = &self.workspaces[i];
+            if changed && ws.connection.is_some() {
+                self.notify(format!(
+                    "Configuração de {} salva. Desconecte e conecte de novo para aplicá-la à conexão aberta.",
+                    ws.desc.display_name
+                ));
+            } else {
+                self.notify(format!("Configuração de {} salva.", ws.desc.display_name));
+            }
+        }
         Task::batch(tasks)
     }
 
@@ -2329,8 +2501,10 @@ impl App {
             }
             return Task::none();
         }
-        if self.modal.is_some() {
-            if matches!(key.as_ref(), Key::Named(key::Named::Escape)) {
+        if let Some(modal) = &self.modal {
+            // Esc não descarta alterações feitas no editor de configurações.
+            let keeps_edits = matches!(modal, Modal::EditWorkspace { form, .. } if form.is_dirty());
+            if matches!(key.as_ref(), Key::Named(key::Named::Escape)) && !keeps_edits {
                 self.modal = None;
             }
             return Task::none();

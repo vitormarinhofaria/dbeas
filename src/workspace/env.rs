@@ -16,27 +16,39 @@ pub fn build_env(
     env_file: Option<&Path>,
     overrides: &[(String, String)],
 ) -> Result<EnvMap, ConfigError> {
+    let file_vars = match env_file {
+        Some(path) => read_env_file(path)?,
+        None => Vec::new(),
+    };
+    Ok(merge(process, &file_vars, overrides))
+}
+
+/// Aplica a precedência processo < `envFile` < `env` sobre variáveis já lidas.
+pub fn merge(
+    process: impl IntoIterator<Item = (String, String)>,
+    file_vars: &[(String, String)],
+    overrides: &[(String, String)],
+) -> EnvMap {
     let mut env: EnvMap = process.into_iter().collect();
-
-    if let Some(path) = env_file {
-        let iter = dotenvy::from_path_iter(path).map_err(|e| ConfigError::EnvFile {
-            path: path.to_path_buf(),
-            reason: describe_dotenv_error(&e),
-        })?;
-        for item in iter {
-            let (key, value) = item.map_err(|e| ConfigError::EnvFile {
-                path: path.to_path_buf(),
-                reason: describe_dotenv_error(&e),
-            })?;
-            env.insert(key, value);
-        }
-    }
-
-    for (key, value) in overrides {
+    for (key, value) in file_vars.iter().chain(overrides) {
         env.insert(key.clone(), value.clone());
     }
+    env
+}
 
-    Ok(env)
+/// Lê as variáveis de um arquivo `.env`, na ordem em que aparecem.
+pub fn read_env_file(path: &Path) -> Result<Vec<(String, String)>, ConfigError> {
+    let iter = dotenvy::from_path_iter(path).map_err(|e| ConfigError::EnvFile {
+        path: path.to_path_buf(),
+        reason: describe_dotenv_error(&e),
+    })?;
+    iter.map(|item| {
+        item.map_err(|e| ConfigError::EnvFile {
+            path: path.to_path_buf(),
+            reason: describe_dotenv_error(&e),
+        })
+    })
+    .collect()
 }
 
 /// Mensagem de erro do `.env` sem repetir o conteúdo da linha, que pode conter

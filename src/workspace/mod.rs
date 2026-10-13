@@ -5,6 +5,7 @@
 //! nomes exibidos (spec §3, §4.1).
 
 pub mod config;
+pub mod editor;
 pub mod env;
 
 use std::collections::HashMap;
@@ -25,6 +26,9 @@ pub struct Descriptor {
     pub id: WorkspaceId,
     pub file: PathBuf,
     pub display_name: String,
+    /// Posição da entrada no array do arquivo; `None` quando o arquivo inteiro
+    /// não pôde ser lido.
+    pub entry: Option<usize>,
     pub config: Result<ResolvedConfig, ConfigError>,
 }
 
@@ -54,6 +58,7 @@ pub fn load_all(files: &[PathBuf]) -> Vec<Descriptor> {
                         id: WorkspaceId(format!("{}#{}", file.display(), key)),
                         file: file.clone(),
                         display_name: label.clone(),
+                        entry: Some(entry.index),
                         config: entry.result,
                     });
                     base_names.push(label);
@@ -69,6 +74,7 @@ pub fn load_all(files: &[PathBuf]) -> Vec<Descriptor> {
                     id: WorkspaceId(format!("{}#", file.display())),
                     file: file.clone(),
                     display_name: label.clone(),
+                    entry: None,
                     config: Err(error),
                 });
                 base_names.push(label);

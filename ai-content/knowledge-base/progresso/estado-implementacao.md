@@ -3,7 +3,7 @@
 Arquivo de continuidade: leia antes de retomar o trabalho com um contexto novo.
 Atualize ao fim de cada etapa.
 
-**Última atualização:** 2026-10-13 (TLS)
+**Última atualização:** 2026-10-13 (editor gráfico do dbeas.json)
 
 ## Como rodar e testar
 
@@ -104,6 +104,8 @@ futura. Autocomplete automático (após `.` e 2+ letras) e por Ctrl+Espaço.
 5b. ~~Menu de contexto (renomear/mover e excluir) no explorador~~ — feito em
    2026-10-09; renomear também move dentro do `sqlFilesDir` (sem `..`); excluir
    move para a lixeira. Ainda não está descrito na spec.
+5c. ~~Editor gráfico do `dbeas.json`~~ — feito em 2026-10-13 (ver
+   [editor gráfico](../configuracao/editor-grafico.md)). Não está na spec.
 6. Melhorias conhecidas: o editor não rola horizontalmente (sem quebra de linha,
    linhas longas ficam cortadas); `timestamptz` é exibido em UTC; a altura usada no
    arraste do divisor é aproximada (`CHROME_HEIGHT`).
@@ -126,4 +128,5 @@ futura. Autocomplete automático (após `.` e 2+ letras) e por Ctrl+Espaço.
 - [Edição de dados](../usabilidade/edicao-dados.md)
 - [Arquivos SQL](../usabilidade/arquivos-sql.md)
 - [TLS](../arquitetura/tls.md)
+- [Editor gráfico do dbeas.json](../configuracao/editor-grafico.md)
 - [Editor inteligente](../arquitetura/editor-inteligente.md)

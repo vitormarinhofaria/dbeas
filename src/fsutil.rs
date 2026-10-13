@@ -25,6 +25,11 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> io::Result<()> {
 
     let result = (|| {
         let mut file = fs::File::create(&tmp_path)?;
+        // Mantém as permissões do arquivo substituído: um dbeas.json com
+        // senha pode estar restrito ao dono (0600).
+        if let Ok(meta) = fs::metadata(path) {
+            file.set_permissions(meta.permissions())?;
+        }
         file.write_all(contents)?;
         file.sync_all()?;
         fs::rename(&tmp_path, path)?;
@@ -88,6 +93,19 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "two");
         let leftovers: Vec<_> = fs::read_dir(path.parent().unwrap()).unwrap().collect();
         assert_eq!(leftovers.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_keeps_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dbeas.json");
+        fs::write(&path, b"[]").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        atomic_write(&path, b"[{}]").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]

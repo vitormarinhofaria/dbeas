@@ -4,8 +4,8 @@
 //! Renderização da janela principal.
 
 use iced::widget::{
-    Column, Space, button, center, column, container, mouse_area, opaque, row, rule, scrollable,
-    space, stack, text, text_input, tooltip,
+    Column, Space, button, center, checkbox, column, container, mouse_area, opaque, pick_list, row,
+    rule, scrollable, space, stack, text, text_input, tooltip,
 };
 use iced::{Alignment, Color, Element, Font, Length, Theme, mouse};
 
@@ -18,6 +18,7 @@ use crate::data_grid::{self, GridView};
 use crate::metadata::RelationKind;
 use crate::session::{ExplorerMode, TabKind};
 use crate::sql_editor::{self, EditorView};
+use crate::workspace::editor::{Field, Form, Preview};
 
 /// Deslocamento horizontal da barra lateral em relação à janela.
 pub const WORKSPACE_STRIP_WIDTH: f32 = 0.0;
@@ -65,9 +66,13 @@ impl App {
         // A raiz é sempre um `stack` com o layout na primeira camada: trocar o
         // tipo do widget raiz faria o Iced recriar todos os widgets, perdendo
         // foco do editor e posições de rolagem.
+        // Clicar fora do editor de configurações não o fecha: perderia o que
+        // foi digitado.
+        let dismissable =
+            !matches!(self.modal, Some(Modal::EditWorkspace { .. })) || self.quick_open.is_some();
         let layer: Element<'_, Message> = match overlay {
-            Some(content) => opaque(
-                mouse_area(center(opaque(content)).style(|_| {
+            Some(content) => opaque({
+                let area = mouse_area(center(opaque(content)).style(|_| {
                     container::Style {
                         background: Some(
                             Color {
@@ -78,9 +83,13 @@ impl App {
                         ),
                         ..container::Style::default()
                     }
-                }))
-                .on_press(Message::CloseModal),
-            ),
+                }));
+                if dismissable {
+                    area.on_press(Message::CloseModal)
+                } else {
+                    area
+                }
+            }),
             None => Space::new().into(),
         };
         stack![base, layer].into()
@@ -706,6 +715,11 @@ impl App {
                 )
                 .into()
             }
+            Modal::EditWorkspace {
+                form,
+                error,
+                show_password,
+            } => settings_view(form, error.as_deref(), *show_password, self.window_height),
             Modal::RemoveWorkspace { file, names } => column![
                 text("Remover workspace").size(18).font(BOLD),
                 text(format!(
@@ -795,6 +809,10 @@ fn workspace_item(index: usize, ws: &Workspace, active: bool) -> Element<'_, Mes
         .padding([4, 8])
         .style(move |theme: &Theme, s| tab_style(theme, s, active));
 
+    let settings = button(text("⚙").size(13))
+        .on_press(Message::OpenWorkspaceSettings(index))
+        .padding([0, 6])
+        .style(button::text);
     let remove = button(text("−").size(13))
         .on_press(Message::AskRemoveWorkspace(index))
         .padding([0, 6])
@@ -804,13 +822,267 @@ fn workspace_item(index: usize, ws: &Workspace, active: bool) -> Element<'_, Mes
         Ok(_) => format!("{} — {}", status.label(), ws.desc.file.display()),
     };
     tooltip(
-        row![item, remove].align_y(Alignment::Center),
+        row![item, settings, remove].align_y(Alignment::Center),
         container(text(tip).size(12))
             .padding(6)
             .style(container::rounded_box),
         tooltip::Position::Right,
     )
     .into()
+}
+
+/// Largura da coluna de rótulos do editor de configurações.
+const SETTINGS_LABEL_WIDTH: f32 = 150.0;
+
+/// Editor gráfico de uma entrada do `dbeas.json`.
+fn settings_view<'a>(
+    form: &'a Form,
+    error: Option<&'a str>,
+    show_password: bool,
+    window_height: f32,
+) -> Element<'a, Message> {
+    let input = |field: Field, placeholder: &'a str| {
+        text_input(placeholder, form.value(field))
+            .on_input(move |v| Message::SettingsField(field, v))
+            .size(13)
+            .width(Length::Fill)
+    };
+
+    let password = form.value(Field::DbPass);
+    // Senha literal fica oculta; referências `${env.X}` ficam legíveis.
+    let secure = !show_password && !password.contains("${env.");
+    let password_input = row![
+        input(Field::DbPass, "sem senha").secure(secure),
+        button(text(if show_password { "Ocultar" } else { "Mostrar" }).size(12))
+            .on_press(Message::SettingsTogglePassword)
+            .padding([2, 8])
+            .style(button::secondary),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
+
+    let ssl = pick_list(
+        form.ssl_choices(),
+        Some(form.ssl_choice()),
+        Message::SettingsSslMode,
+    )
+    .text_size(13)
+    .width(Length::Fill);
+
+    let mut env_rows = Column::new().spacing(4);
+    for (i, (key, value)) in form.env.iter().enumerate() {
+        env_rows = env_rows.push(
+            row![
+                text_input("NOME", key)
+                    .on_input(move |v| Message::SettingsEnvKey(i, v))
+                    .size(13)
+                    .font(Font::MONOSPACE)
+                    .width(170),
+                text_input("valor", value)
+                    .on_input(move |v| Message::SettingsEnvValue(i, v))
+                    .size(13)
+                    .width(Length::Fill),
+                button(text("−").size(13))
+                    .on_press(Message::SettingsEnvRemove(i))
+                    .padding([2, 8])
+                    .style(button::text),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        );
+    }
+    let env_section = column![
+        env_rows,
+        row![
+            button(text("+ variável").size(12))
+                .on_press(Message::SettingsEnvAdd)
+                .padding([2, 8])
+                .style(button::secondary),
+            text("Valores literais (sem ${env.NOME}); sobrescrevem o envFile e o ambiente.")
+                .size(12)
+                .style(muted),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    ]
+    .spacing(6);
+
+    let fields = column![
+        section("Identificação"),
+        settings_field(form, Field::Name, input(Field::Name, "obrigatório").into()),
+        section("Conexão"),
+        settings_field(
+            form,
+            Field::DbHost,
+            input(Field::DbHost, "localhost").into()
+        ),
+        settings_field(form, Field::DbPort, input(Field::DbPort, "5432").into()),
+        settings_field(
+            form,
+            Field::DbUser,
+            input(Field::DbUser, "usuário do sistema ($USER)").into()
+        ),
+        settings_field(form, Field::DbPass, password_input.into()),
+        settings_field(
+            form,
+            Field::DbName,
+            input(Field::DbName, "obrigatório").into()
+        ),
+        section("TLS"),
+        settings_field(form, Field::SslMode, ssl.into()),
+        settings_field(
+            form,
+            Field::SslRootCert,
+            input(Field::SslRootCert, "CAs do sistema").into()
+        ),
+        section("Variáveis"),
+        settings_field(
+            form,
+            Field::EnvFile,
+            input(Field::EnvFile, "ex.: .env").into()
+        ),
+        row![
+            text("env")
+                .size(12)
+                .font(Font::MONOSPACE)
+                .width(SETTINGS_LABEL_WIDTH),
+            env_section,
+        ]
+        .spacing(8),
+        section("Comportamento"),
+        labeled(
+            "readOnly",
+            checkbox(form.read_only)
+                .label("Somente leitura")
+                .on_toggle(Message::SettingsReadOnly)
+                .text_size(13)
+                .into(),
+        ),
+        labeled(
+            "requireTransaction",
+            checkbox(form.require_transaction)
+                .label("Exigir transação explícita para alterar dados")
+                .on_toggle(Message::SettingsRequireTransaction)
+                .text_size(13)
+                .into(),
+        ),
+        settings_field(
+            form,
+            Field::SqlFilesDir,
+            input(Field::SqlFilesDir, "ex.: ./sql").into()
+        ),
+    ]
+    .spacing(8)
+    .padding(iced::Padding {
+        right: 14.0,
+        ..iced::Padding::ZERO
+    });
+
+    let blocking = form.check().err();
+    let status: Element<'a, Message> = match (form.validation(), &blocking) {
+        (Ok(()), _) => text("Configuração válida.")
+            .size(13)
+            .style(success_text)
+            .into(),
+        (Err(e), Some(_)) => text(format!("{e} Corrija para salvar."))
+            .size(13)
+            .style(danger_text)
+            .into(),
+        (Err(e), None) => text(format!(
+            "Atenção: {e}. É possível salvar, mas o workspace ficará com erro nesta máquina."
+        ))
+        .size(13)
+        .style(danger_text)
+        .into(),
+    };
+
+    let mut col = column![
+        text("Configurações do workspace").size(18).font(BOLD),
+        text(format!(
+            "{} — entrada {}",
+            form.file.display(),
+            form.index + 1
+        ))
+        .size(12)
+        .font(Font::MONOSPACE)
+        .style(muted),
+        container(scrollable(fields).height(Length::Shrink))
+            .max_height((window_height - 300.0).max(160.0)),
+        status,
+    ]
+    .spacing(10);
+    if let Some(e) = error {
+        col = col.push(text(e).size(13).style(danger_text));
+    }
+    col.push(
+        row![
+            text("Caminhos relativos partem do diretório do dbeas.json.")
+                .size(12)
+                .style(muted),
+            space::horizontal(),
+            button(text("Cancelar"))
+                .on_press(Message::CloseModal)
+                .style(button::secondary),
+            button(text("Salvar")).on_press_maybe(
+                (form.is_dirty() && blocking.is_none()).then_some(Message::SettingsSave)
+            ),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    )
+    .into()
+}
+
+fn section<'a>(title: &'a str) -> Element<'a, Message> {
+    container(text(title.to_uppercase()).size(11).font(BOLD).style(muted))
+        .padding(iced::Padding {
+            top: 6.0,
+            ..iced::Padding::ZERO
+        })
+        .into()
+}
+
+fn labeled<'a>(label: &'a str, content: Element<'a, Message>) -> Element<'a, Message> {
+    row![
+        text(label)
+            .size(12)
+            .font(Font::MONOSPACE)
+            .width(SETTINGS_LABEL_WIDTH),
+        content,
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// Campo com a prévia do valor resolvido logo abaixo. A prévia é acrescentada
+/// depois do campo para não mudar a posição do `text_input` na árvore (perderia
+/// o foco enquanto o usuário digita).
+fn settings_field<'a>(
+    form: &'a Form,
+    field: Field,
+    input: Element<'a, Message>,
+) -> Element<'a, Message> {
+    let mut col = column![labeled(field.key(), input)].spacing(3);
+    if let Some(preview) = form.preview(field) {
+        let indent = Space::new().width(SETTINGS_LABEL_WIDTH + 8.0);
+        let value: Element<'a, Message> = match preview {
+            Preview::Value(v) if v.is_empty() => text("→ (vazio)").size(12).style(muted).into(),
+            Preview::Value(v) => text(format!("→ {v}"))
+                .size(12)
+                .font(Font::MONOSPACE)
+                .style(muted)
+                .into(),
+            Preview::Masked => text("→ ********")
+                .size(12)
+                .font(Font::MONOSPACE)
+                .style(muted)
+                .into(),
+            Preview::Error(e) => text(format!("⚠ {e}")).size(12).style(danger_text).into(),
+        };
+        col = col.push(row![indent, value]);
+    }
+    col.into()
 }
 
 fn transaction_controls(ws: &Workspace) -> Element<'_, Message> {
@@ -1706,6 +1978,12 @@ fn muted(theme: &Theme) -> text::Style {
             a: 0.6,
             ..p.background.base.text
         }),
+    }
+}
+
+fn success_text(theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(theme.extended_palette().success.strong.color),
     }
 }
 

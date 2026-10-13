@@ -216,7 +216,9 @@ fn classify_json_error(e: &serde_json::Error) -> &'static str {
     }
 }
 
-fn resolve_entry(
+/// Resolve e valida uma entrada (objeto do array). Caminhos relativos partem de
+/// `base_dir`, o diretório do `dbeas.json`.
+pub fn resolve_entry(
     obj: &Map<String, Value>,
     base_dir: &Path,
     process_env: impl IntoIterator<Item = (String, String)>,
