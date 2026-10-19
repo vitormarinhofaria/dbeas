@@ -11,13 +11,13 @@ O diálogo "Adicionar workspace" aceita um arquivo ou um diretório (botões
 "Arquivo…" e "Diretório…"). `resolve` é refeito a cada alteração do caminho e
 decide o botão:
 
-- Arquivo existente, ou diretório com `dbeas.json` → **Adicionar** (registra).
-- Diretório sem `dbeas.json` → **Criar** `<dir>/dbeas.json`.
+- Arquivo existente, ou diretório com `dbeasy.json` → **Adicionar** (registra).
+- Diretório sem `dbeasy.json` → **Criar** `<dir>/dbeasy.json`.
 - Caminho inexistente → **Criar**: termina em `.json` → esse arquivo; senão é
-  tratado como diretório novo com `dbeas.json` dentro. Diretórios ausentes são
+  tratado como diretório novo com `dbeasy.json` dentro. Diretórios ausentes são
   criados. Para criar, o caminho precisa ser absoluto (`~/` é expandido).
 
-Criar pede confirmação na própria janela ("Deseja criar dbeas.json em
+Criar pede confirmação na própria janela ("Deseja criar dbeasy.json em
 {diretório}?", botões Voltar/Criar; Enter também confirma). Editar o caminho
 cancela a confirmação.
 

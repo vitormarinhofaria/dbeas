@@ -10,12 +10,12 @@ use std::process::Command;
 
 use crate::fsutil;
 
-pub const NAME: &str = "DBeas";
+pub const NAME: &str = "DBeasy";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
 pub const COPYRIGHT: &str = "Copyright © 2026 Vitor Marinho Faria";
 pub const LICENSE_ID: &str = "GPL-3.0-or-later";
-pub const SOURCE_URL: &str = "https://github.com/vitormarinhofaria/dbeas";
+pub const SOURCE_URL: &str = "https://github.com/vitormarinhofaria/dbeasy";
 
 /// Aviso recomendado pela GPL para programas interativos (seção
 /// "How to Apply These Terms to Your New Programs").
@@ -37,7 +37,7 @@ pub const THIRD_PARTY_HTML: &[u8] =
 /// chamada: o que se abre é sempre o conteúdo do binário, mesmo que alguém
 /// tenha alterado o arquivo de uma abertura anterior.
 pub fn write_third_party(dir: &Path) -> io::Result<PathBuf> {
-    let path = dir.join(format!("dbeas-{VERSION}-THIRD_PARTY_LICENSES.html"));
+    let path = dir.join(format!("dbeasy-{VERSION}-THIRD_PARTY_LICENSES.html"));
     fsutil::atomic_write(&path, THIRD_PARTY_HTML)?;
     Ok(path)
 }
@@ -49,7 +49,7 @@ pub fn open_third_party() -> Result<(), String> {
     let dir = dirs::runtime_dir()
         .or_else(dirs::cache_dir)
         .ok_or("diretório para o arquivo temporário não encontrado")?
-        .join("dbeas");
+        .join("dbeasy");
     let path = write_third_party(&dir)
         .map_err(|e| format!("não foi possível gravar as licenças de terceiros: {e}"))?;
     open_external(path)

@@ -128,7 +128,7 @@ fn root_store(root_cert: Option<&Path>) -> Result<RootCertStore, String> {
             store.add_parsable_certificates(native.certs);
             if store.is_empty() {
                 return Err(
-                    "nenhuma CA do sistema encontrada; informe sslRootCert no dbeas.json".into(),
+                    "nenhuma CA do sistema encontrada; informe sslRootCert no dbeasy.json".into(),
                 );
             }
         }

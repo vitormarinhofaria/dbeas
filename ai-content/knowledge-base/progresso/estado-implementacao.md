@@ -7,17 +7,17 @@ Atualize ao fim de cada etapa.
 
 ## Como rodar e testar
 
-- `cargo run` — abre o app usando `~/.config/dbeas/config` e
-  `~/.local/state/dbeas/session.json`.
+- `cargo run` — abre o app usando `~/.config/dbeasy/config` e
+  `~/.local/state/dbeasy/session.json`.
 - Para não tocar na configuração real, isole com
   `XDG_CONFIG_HOME=/tmp/x/config XDG_STATE_HOME=/tmp/x/state cargo run`.
 - `cargo test` — testes unitários + 8 de integração com PG; TLS: `scripts/test-tls.sh`. O build do
   `pg_query` precisa de `clang`.
 - Testes com PostgreSQL real (`tests/postgres.rs`), ignorados sem a variável:
   ```
-  docker run -d --name dbeas-test-pg -e POSTGRES_PASSWORD=dbeas -e POSTGRES_USER=dbeas \
-    -e POSTGRES_DB=dbeas_dev -p 127.0.0.1:55432:5432 postgres:17
-  DBEAS_TEST_PG=127.0.0.1:55432:dbeas:dbeas:dbeas_dev cargo test
+  docker run -d --name dbeasy-test-pg -e POSTGRES_PASSWORD=dbeasy -e POSTGRES_USER=dbeasy \
+    -e POSTGRES_DB=dbeasy_dev -p 127.0.0.1:55432:5432 postgres:17
+  DBEASY_TEST_PG=127.0.0.1:55432:dbeasy:dbeasy:dbeasy_dev cargo test
   ```
 - Não há ferramenta de injeção de teclado/mouse no ambiente (Wayland/KDE, sem
   ydotool). A verificação visual foi feita com `spectacle -b -n -a -o arquivo.png`.
@@ -26,8 +26,8 @@ Atualize ao fim de cada etapa.
 
 | Área | Situação | Onde |
 | --- | --- | --- |
-| `dbeas.json`: parse, validação, `${env.X}`, precedência, padrões, erros sem segredos | pronto, testado | `src/workspace/{config,env}.rs` |
-| Registro global (`~/.config/dbeas/config`), dedup, remoção, gravação atômica | pronto, testado | `src/settings.rs`, `src/fsutil.rs` |
+| `dbeasy.json`: parse, validação, `${env.X}`, precedência, padrões, erros sem segredos | pronto, testado | `src/workspace/{config,env}.rs` |
+| Registro global (`~/.config/dbeasy/config`), dedup, remoção, gravação atômica | pronto, testado | `src/settings.rs`, `src/fsutil.rs` |
 | Nomes duplicados → sufixo com repo Git/diretório pai | pronto, testado | `src/workspace/mod.rs` |
 | Sessão por workspace (abas, ordem, ativa, SQL, explorador, split, largura da sidebar) | pronto, testado, verificado no app | `src/session.rs`, `src/app/state.rs` |
 | Conexão (ator tokio), estados, cancelamento, readOnly em 2 camadas | pronto, testado com PG | `src/connection.rs`, `src/query/classify.rs` |
@@ -108,11 +108,11 @@ futura. Autocomplete automático (após `.` e 2+ letras) e por Ctrl+Espaço.
 5b. ~~Menu de contexto (renomear/mover e excluir) no explorador~~ — feito em
    2026-10-09; renomear também move dentro do `sqlFilesDir` (sem `..`); excluir
    move para a lixeira. Ainda não está descrito na spec.
-5c. ~~Editor gráfico do `dbeas.json`~~ — feito em 2026-10-13 (ver
+5c. ~~Editor gráfico do `dbeasy.json`~~ — feito em 2026-10-13 (ver
    [editor gráfico](../configuracao/editor-grafico.md)). Não está na spec.
-5d. ~~Criar `dbeas.json` pelo diálogo de adicionar workspace~~ — feito em
+5d. ~~Criar `dbeasy.json` pelo diálogo de adicionar workspace~~ — feito em
    2026-10-13 (ver [adicionar ou criar](../usabilidade/adicionar-criar-workspace.md)).
-5e. ~~Editor do dbeas.json com todas as entradas em abas e "+ nova entrada"~~ —
+5e. ~~Editor do dbeasy.json com todas as entradas em abas e "+ nova entrada"~~ —
    feito em 2026-10-13. Remover entrada existente pelo editor não foi pedido.
 5f. ~~Botão "Testar conexão" com resumo (latência, servidor, sessão)~~ — feito
    em 2026-10-13 (ver [editor gráfico](../configuracao/editor-grafico.md)).
@@ -134,13 +134,13 @@ futura. Autocomplete automático (após `.` e 2+ letras) e por Ctrl+Espaço.
 - [Módulos](../arquitetura/modulos.md)
 - [Decisões da rodada 1](../arquitetura/decisoes-rodada-1.md)
 - [Transformações de SQL](../arquitetura/transformacoes-sql.md)
-- [Regras do dbeas.json](../configuracao/dbeas-json.md)
+- [Regras do dbeasy.json](../configuracao/dbeasy-json.md)
 - [Atalhos](../usabilidade/atalhos.md)
 - [Execução de SQL](../usabilidade/execucao-sql.md)
 - [Transações](../usabilidade/transacoes.md)
 - [Edição de dados](../usabilidade/edicao-dados.md)
 - [Arquivos SQL](../usabilidade/arquivos-sql.md)
 - [TLS](../arquitetura/tls.md)
-- [Editor gráfico do dbeas.json](../configuracao/editor-grafico.md)
+- [Editor gráfico do dbeasy.json](../configuracao/editor-grafico.md)
 - [Adicionar ou criar workspace](../usabilidade/adicionar-criar-workspace.md)
 - [Editor inteligente](../arquitetura/editor-inteligente.md)

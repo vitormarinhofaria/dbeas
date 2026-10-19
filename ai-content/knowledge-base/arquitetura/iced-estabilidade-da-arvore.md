@@ -35,7 +35,7 @@ diálogo de permissão "Controle remoto" do KDE — precisa de aprovação do us
 ## Capturas de tela para verificação
 
 - `spectacle -a` captura a **janela ativa**: se o usuário estiver em outro
-  programa, captura a tela dele. Não usar sem a janela do DBeas em foco; nunca usar
+  programa, captura a tela dele. Não usar sem a janela do DBeasy em foco; nunca usar
   `spectacle -r` (espera seleção do usuário e trava).
 - Preferir captura interna num gancho temporário: `window::latest()
   .and_then(window::screenshot)` grava `Screenshot.rgba` (converter com PIL). A

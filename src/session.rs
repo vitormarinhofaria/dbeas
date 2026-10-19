@@ -117,7 +117,7 @@ pub enum TabKind {
     File { path: PathBuf, dirty: bool },
 }
 
-/// `~/.local/state/dbeas/session.json` (XDG_STATE_HOME), separado da
+/// `~/.local/state/dbeasy/session.json` (XDG_STATE_HOME), separado da
 /// configuração global.
 pub fn default_path() -> PathBuf {
     dirs::state_dir()
@@ -128,7 +128,7 @@ pub fn default_path() -> PathBuf {
                 .join(".local")
                 .join("state")
         })
-        .join("dbeas")
+        .join("dbeasy")
         .join("session.json")
 }
 

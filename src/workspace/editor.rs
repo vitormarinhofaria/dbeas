@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Edição gráfica das entradas de um `dbeas.json`.
+//! Edição gráfica das entradas de um `dbeasy.json`.
 //!
 //! O `Document` reúne um formulário por entrada do arquivo (uma aba na tela) e
 //! as entradas novas, acrescentadas ao fim do array ao gravar. Cada formulário
 //! guarda o texto cru de cada campo (com as referências
 //! `${env.NOME}` intactas) e só reescreve no arquivo o que o usuário alterou:
 //! campos intocados mantêm o valor e o tipo JSON originais, e chaves que o
-//! DBeas não conhece são preservadas na posição em que estavam.
+//! DBeasy não conhece são preservadas na posição em que estavam.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -48,7 +48,7 @@ impl Field {
         Field::SslRootCert,
     ];
 
-    /// Nome da chave no `dbeas.json`.
+    /// Nome da chave no `dbeasy.json`.
     pub fn key(self) -> &'static str {
         match self {
             Field::Name => "name",
@@ -122,7 +122,7 @@ impl fmt::Display for SslChoice {
     }
 }
 
-/// Todas as entradas de um `dbeas.json`, editadas juntas e gravadas de uma vez.
+/// Todas as entradas de um `dbeasy.json`, editadas juntas e gravadas de uma vez.
 pub struct Document {
     pub file: PathBuf,
     original_text: String,
@@ -211,13 +211,13 @@ impl Document {
         }
     }
 
-    /// Diretório do `dbeas.json`, base dos caminhos relativos.
+    /// Diretório do `dbeasy.json`, base dos caminhos relativos.
     pub fn base_dir(&self) -> &Path {
         &self.base_dir
     }
 
     /// Texto a gravar para um diretório escolhido no seletor: relativo ao
-    /// diretório do `dbeas.json` (`./sql`, ou `.` para ele mesmo) quando
+    /// diretório do `dbeasy.json` (`./sql`, ou `.` para ele mesmo) quando
     /// estiver abaixo dele, absoluto caso contrário.
     pub fn dir_value(&self, picked: &Path) -> String {
         let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
@@ -270,7 +270,7 @@ impl Document {
     }
 
     /// Grava todas as entradas. Recusa se o arquivo mudou desde a abertura,
-    /// para não sobrescrever edições feitas fora do DBeas.
+    /// para não sobrescrever edições feitas fora do DBeasy.
     pub fn save(&self) -> Result<(), String> {
         if let Some((tab, e)) = self.blocking() {
             return Err(format!("{}: {e}", self.forms[tab].label()));
@@ -681,7 +681,7 @@ mod tests {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
         let mut doc =
-            Document::from_text(json.to_string(), Path::new("/p/dbeas.json"), 0, env).unwrap();
+            Document::from_text(json.to_string(), Path::new("/p/dbeasy.json"), 0, env).unwrap();
         doc.forms.remove(0)
     }
 
@@ -792,7 +792,7 @@ mod tests {
         std::fs::write(dir.path().join(".env"), "H=do_arquivo\n").unwrap();
         let mut doc = Document::from_text(
             r#"[{"name":"a","dbName":"x","dbHost":"${env.H}"}]"#.into(),
-            &dir.path().join("dbeas.json"),
+            &dir.path().join("dbeasy.json"),
             0,
             Vec::new(),
         )
@@ -845,7 +845,7 @@ mod tests {
     #[test]
     fn save_replaces_only_the_entry_and_detects_external_changes() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("dbeas.json");
+        let path = dir.path().join("dbeasy.json");
         let text = "[\n    {\"name\": \"a\", \"dbName\": \"x\"},\n    {\"name\": \"b\", \"dbName\": \"y\"}\n]\n";
         std::fs::write(&path, text).unwrap();
 
@@ -877,7 +877,7 @@ mod tests {
     fn document_has_one_tab_per_object_entry() {
         let doc = Document::from_text(
             r#"[{"name":"a","dbName":"x"},42,{"dbName":"y"}]"#.into(),
-            Path::new("/p/dbeas.json"),
+            Path::new("/p/dbeasy.json"),
             2,
             Vec::new(),
         )
@@ -887,14 +887,14 @@ mod tests {
         assert_eq!(doc.active, 1);
         assert!(!doc.is_dirty());
 
-        let err = Document::from_text("[1]".into(), Path::new("/p/dbeas.json"), 0, Vec::new());
+        let err = Document::from_text("[1]".into(), Path::new("/p/dbeasy.json"), 0, Vec::new());
         assert!(err.is_err());
     }
 
     #[test]
     fn empty_array_opens_with_a_new_entry() {
         let doc =
-            Document::from_text("[]".into(), Path::new("/p/dbeas.json"), 0, Vec::new()).unwrap();
+            Document::from_text("[]".into(), Path::new("/p/dbeasy.json"), 0, Vec::new()).unwrap();
         assert_eq!(doc.forms.len(), 1);
         assert_eq!(doc.form().index, None);
         assert!(doc.is_dirty());
@@ -904,7 +904,7 @@ mod tests {
     #[test]
     fn new_entries_are_appended_and_edits_saved_together() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("dbeas.json");
+        let path = dir.path().join("dbeasy.json");
         std::fs::write(&path, "[{\"name\":\"a\",\"dbName\":\"x\"},true]").unwrap();
 
         let mut doc = Document::open(&path, 0).unwrap();
@@ -934,9 +934,9 @@ mod tests {
 
     #[test]
     fn picked_dir_is_relative_to_the_json_when_below_it() {
-        let tmp = std::env::temp_dir().join(format!("dbeas-dir-value-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("dbeasy-dir-value-{}", std::process::id()));
         std::fs::create_dir_all(tmp.join("ws/sql/sub")).unwrap();
-        let file = tmp.join("ws/dbeas.json");
+        let file = tmp.join("ws/dbeasy.json");
         let doc = Document::from_text("[]".into(), &file, 0, vec![]).unwrap();
         assert_eq!(doc.dir_value(&tmp.join("ws")), ".");
         assert_eq!(doc.dir_value(&tmp.join("ws/sql/sub")), "./sql/sub");
@@ -949,7 +949,7 @@ mod tests {
     fn only_new_entries_can_be_discarded() {
         let mut doc = Document::from_text(
             r#"[{"name":"a","dbName":"x"}]"#.into(),
-            Path::new("/p/dbeas.json"),
+            Path::new("/p/dbeasy.json"),
             0,
             Vec::new(),
         )

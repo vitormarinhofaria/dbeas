@@ -314,7 +314,7 @@ async fn open_client(config: &ResolvedConfig) -> Result<(Client, bool), String> 
         .port(config.port)
         .user(&config.user)
         .dbname(&config.db_name)
-        .application_name("dbeas")
+        .application_name("dbeasy")
         .connect_timeout(Duration::from_secs(10));
     if let Some(password) = config.password.expose() {
         pg.password(password);
@@ -693,9 +693,9 @@ impl Actor {
             ("BEGIN", "ROLLBACK", "COMMIT")
         } else {
             (
-                "SAVEPOINT dbeas_grade",
-                "ROLLBACK TO SAVEPOINT dbeas_grade; RELEASE SAVEPOINT dbeas_grade",
-                "RELEASE SAVEPOINT dbeas_grade",
+                "SAVEPOINT dbeasy_grade",
+                "ROLLBACK TO SAVEPOINT dbeasy_grade; RELEASE SAVEPOINT dbeasy_grade",
+                "RELEASE SAVEPOINT dbeasy_grade",
             )
         };
         let fail = |e: &tokio_postgres::Error| QueryError::from_pg(e, "");

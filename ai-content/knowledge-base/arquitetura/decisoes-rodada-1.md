@@ -21,7 +21,7 @@ Decisões pendentes da §15 tomadas em 2026-10-09 (com o usuário quando indicad
   (sem `INTO`/`FOR UPDATE`/CTE com DML), VALUES, EXPLAIN sem ANALYZE e SHOW; SQL que
   não pode ser analisado é bloqueado; (2) a sessão é aberta com
   `-c default_transaction_read_only=on`.
-- **Sessão:** `$XDG_STATE_HOME/dbeas/session.json` (`~/.local/state/...`),
+- **Sessão:** `$XDG_STATE_HOME/dbeasy/session.json` (`~/.local/state/...`),
   autosave a cada 3 s quando há mudança, e gravação ao fechar. Arquivos SQL sem
   alterações são relidos do disco; com alterações, o conteúdo vai para a sessão,
   por isso fechar o app não pede confirmação.

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! DBeas — cliente desktop PostgreSQL em Rust + Iced.
+//! DBeasy — cliente desktop PostgreSQL em Rust + Iced.
 
 pub mod about;
 pub mod app;

@@ -151,7 +151,7 @@ impl App {
     fn header(&self) -> Element<'_, Message> {
         let Some(ws) = self.active_ws() else {
             return container(
-                text("Adicione um arquivo dbeas.json pelo botão + da barra lateral.").size(14),
+                text("Adicione um arquivo dbeasy.json pelo botão + da barra lateral.").size(14),
             )
             .padding(12)
             .into();
@@ -909,7 +909,7 @@ impl App {
                 };
                 let mut col = column![
                     text("Adicionar workspace").size(18).font(BOLD),
-                    text("Caminho de um dbeas.json ou do diretório dele. Sem dbeas.json, ele é criado. O arquivo é registrado uma única vez em ~/.config/dbeas/config.").size(13).style(muted),
+                    text("Caminho de um dbeasy.json ou do diretório dele. Sem dbeasy.json, ele é criado. O arquivo é registrado uma única vez em ~/.config/dbeasy/config.").size(13).style(muted),
                     row![
                         text_input("/caminho/do/projeto", path)
                             .on_input(Message::AddPathChanged)
@@ -1151,7 +1151,7 @@ const SETTINGS_LABEL_WIDTH: f32 = 150.0;
 /// Contêiner dos campos do editor de configurações: escopo do Tab.
 pub(super) const SETTINGS_FIELDS: &str = "settings-fields";
 
-/// Editor gráfico das entradas de um `dbeas.json`: uma aba por entrada.
+/// Editor gráfico das entradas de um `dbeasy.json`: uma aba por entrada.
 fn settings_view<'a>(
     doc: &'a Document,
     error: Option<&'a str>,
@@ -1323,7 +1323,7 @@ fn settings_view<'a>(
         Some(i) => format!("Entrada {} do arquivo.", i + 1),
         None => "Entrada nova: será acrescentada ao fim do arquivo ao salvar.".into(),
     };
-    let entry = format!("{entry} Caminhos relativos partem do diretório do dbeas.json.");
+    let entry = format!("{entry} Caminhos relativos partem do diretório do dbeasy.json.");
     // Altura das mensagens abaixo do formulário, descontada da área rolável
     // para que o resumo do teste e os botões caibam na janela.
     let other_blocking = blocking.as_ref().filter(|(tab, _)| *tab != doc.active);
@@ -1535,7 +1535,7 @@ fn section<'a>(title: &'a str) -> Element<'a, Message> {
 }
 
 /// Rótulo de campo do editor: nome descritivo e, abaixo, a chave no
-/// `dbeas.json` em letra menor e mais apagada.
+/// `dbeasy.json` em letra menor e mais apagada.
 fn field_label<'a>(title: &'a str, key: &'a str) -> Element<'a, Message> {
     column![
         text(title).size(13),
@@ -1750,7 +1750,7 @@ fn tls_badge(
         return match config.ssl_mode {
             SslMode::Disable => (
                 "sem TLS",
-                "Conexão sem criptografia (sslMode disable). Configure sslMode no dbeas.json para usar TLS.",
+                "Conexão sem criptografia (sslMode disable). Configure sslMode no dbeasy.json para usar TLS.",
             ),
             _ => (
                 "sem TLS",

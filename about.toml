@@ -1,7 +1,7 @@
 # Configuração do cargo-about (https://embarkstudios.github.io/cargo-about/).
 #
 # Gera THIRD_PARTY_LICENSES.html com o texto das licenças de todas as
-# dependências, exigido ao distribuir binários do DBeas (GPL-3.0-or-later).
+# dependências, exigido ao distribuir binários do DBeasy (GPL-3.0-or-later).
 #
 # Uso: cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
 # Mantenha a lista em sincronia com deny.toml.
@@ -25,5 +25,5 @@ accepted = [
 # Ferramentas de teste não são distribuídas.
 ignore-dev-dependencies = true
 ignore-build-dependencies = false
-# O próprio DBeas não entra na lista de terceiros.
+# O próprio DBeasy não entra na lista de terceiros.
 private = { ignore = true }

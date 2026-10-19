@@ -1,4 +1,4 @@
-# DBeas --- Especificação Inicial do Produto
+# DBeasy --- Especificação Inicial do Produto
 
 > **Status:** especificação inicial\
 > **Stack definida:** Rust + Iced\
@@ -15,7 +15,7 @@ consultar, navegar e editar dados por meio de uma interface inspirada em
 clientes de banco como o DBeaver.
 
 A aplicação deve ser organizada em **workspaces**. Cada workspace é
-definido por um arquivo `dbeas.json`, normalmente versionado junto a um
+definido por um arquivo `dbeasy.json`, normalmente versionado junto a um
 repositório Git. O usuário registra cada arquivo de workspace uma única
 vez; a aplicação mantém uma lista dos workspaces registrados e restaura
 o estado de trabalho entre execuções.
@@ -40,12 +40,12 @@ o estado de trabalho entre execuções.
     operações potencialmente lentas não devem bloquear a thread da
     interface.
 -   **Segredos:** não registrar senhas ou conteúdo sensível em logs. O
-    arquivo `dbeas.json` pode conter referências a variáveis de
+    arquivo `dbeasy.json` pode conter referências a variáveis de
     ambiente; não deve exigir que segredos sejam versionados.
 
 ## 3. Configuração de workspace
 
-### 3.1. Arquivo `dbeas.json`
+### 3.1. Arquivo `dbeasy.json`
 
 O arquivo contém um array JSON de configurações de workspace. Cada item
 representa uma conexão/workspace exibida na aplicação.
@@ -82,7 +82,7 @@ obrigatórios e não possuem valores padrão. Em caso de colisão de `name` entr
   | Campo | Tipo | Obrigatório | Comportamento |
 | --- | --- | --- | --- |
 | `name` | string | **Sim** | Nome exibível do workspace. Valor vazio ou ausente torna a entrada inválida. |
-| `envFile` | string | Não | Caminho para arquivo `.env`; caminho relativo é resolvido a partir do diretório do `dbeas.json`. |
+| `envFile` | string | Não | Caminho para arquivo `.env`; caminho relativo é resolvido a partir do diretório do `dbeasy.json`. |
 | `env` | objeto string → string | Não | Variáveis adicionais ou sobrescritas usadas na resolução de configuração. |
 | `dbHost` | string | Não | Host PostgreSQL. Se ausente ou vazio, usar `localhost`. Aceita `${env.NOME}`. |
 | `dbPort` | número ou string numérica | Não | Porta PostgreSQL. Se ausente ou vazia, usar `5432`. Aceita `${env.NOME}`. |
@@ -92,8 +92,8 @@ obrigatórios e não possuem valores padrão. Em caso de colisão de `name` entr
 | `readOnly` | boolean | Não | Padrão `false`. Quando `true`, a aplicação deve tratar o workspace como somente leitura e impedir operações de escrita pela UI. |
 | `requireTransaction` | boolean | Não | Padrão `false`. Quando `true`, alterações de dados devem ser executadas em transação explícita e confirmadas pelo usuário antes do `COMMIT`. |
 | `sslMode` | string | Não | Modo TLS, com a semântica do `sslmode` do libpq: `disable`, `prefer` (padrão), `require`, `verify-ca` ou `verify-full`. `prefer` tenta TLS e aceita conexão sem TLS; `require` exige TLS sem verificar o certificado (com `sslRootCert`, verifica a CA, como no libpq); `verify-ca` verifica a CA; `verify-full` verifica a CA e o nome do host. Aceita `${env.NOME}`. |
-| `sslRootCert` | string | Não | Arquivo PEM com a(s) CA(s) confiáveis para verificar o servidor. Caminho relativo é resolvido a partir do diretório do `dbeas.json`. Sem ele, os modos com verificação usam as CAs do sistema. Aceita `${env.NOME}`. |
-| `sqlFilesDir` | string | Não | Diretório inicial do explorador de arquivos SQL. Caminho relativo é resolvido a partir do diretório do `dbeas.json`. Se omitido ou inválido, a área de arquivos informa que não há diretório configurado. |
+| `sslRootCert` | string | Não | Arquivo PEM com a(s) CA(s) confiáveis para verificar o servidor. Caminho relativo é resolvido a partir do diretório do `dbeasy.json`. Sem ele, os modos com verificação usam as CAs do sistema. Aceita `${env.NOME}`. |
+| `sqlFilesDir` | string | Não | Diretório inicial do explorador de arquivos SQL. Caminho relativo é resolvido a partir do diretório do `dbeasy.json`. Se omitido ou inválido, a área de arquivos informa que não há diretório configurado. |
 
 ### 3.3. Resolução de variáveis e precedência
 
@@ -120,7 +120,7 @@ Outras regras:
     `readOnly` e `requireTransaction` devem ser booleanos JSON.
 -   Validar `dbPort` como inteiro entre 1 e 65535 depois da resolução.
 -   Normalizar caminhos relativos com base no diretório que contém o
-    `dbeas.json`, não no diretório de trabalho do processo.
+    `dbeasy.json`, não no diretório de trabalho do processo.
 -   Não incluir a senha em mensagens de erro, logs ou diagnósticos.
 
 ### 3.4. Configuração global da aplicação
@@ -128,18 +128,18 @@ Outras regras:
 Ao adicionar um arquivo de workspace, registrar seu caminho absoluto no
 arquivo:
 
-`~/.config/dbeas/config`
+`~/.config/dbeasy/config`
 
 O formato interno ainda pode evoluir, mas deve conter uma lista de
-caminhos dos arquivos `dbeas.json` registrados e ser versionado por uma
+caminhos dos arquivos `dbeasy.json` registrados e ser versionado por uma
 propriedade de versão de esquema. Exemplo provisório:
 
 ``` json
 {
   "version": 1,
   "workspaces": [
-    "/home/user/projeto-a/dbeas.json",
-    "/home/user/projeto-b/dbeas.json"
+    "/home/user/projeto-a/dbeasy.json",
+    "/home/user/projeto-b/dbeasy.json"
   ]
 }
 ```
@@ -177,7 +177,7 @@ deve manter visível o contexto do workspace ativo.
 -   Exibir todos os workspaces registrados/abertos em uma faixa
     vertical.
 -   Mostrar a propriedade `name` da entrada correspondente no
-    `dbeas.json` como identificação primária.
+    `dbeasy.json` como identificação primária.
 -   Se houver valores de `name` duplicados entre workspaces, acrescentar
     o nome do repositório Git ou, quando não for possível identificá-lo,
     o nome do diretório pai para evitar ambiguidades.
@@ -419,7 +419,7 @@ Quando `requireTransaction: true`:
     salvar e executar o conteúdo ou a seleção.
 -   Oferecer a opção de criar um novo arquivo SQL, tendo como base o
     diretório de arquivos da configuração do workspace (`sqlFilesDir`,
-    resolvido a partir do diretório do `dbeas.json`):
+    resolvido a partir do diretório do `dbeasy.json`):
     -   o usuário informa o nome do arquivo; caminho relativo é
         resolvido dentro de `sqlFilesDir`, partindo do diretório
         exibido no explorador;
@@ -537,7 +537,7 @@ mensagens de resultado para atualizar o estado.
 -   Não registrar senhas, strings de conexão com senha ou conteúdo
     sensível em logs.
 -   Não exibir senha em mensagens de erro ou no popup de SQL.
--   Tratar `dbeas.json`, `.env`, arquivos SQL e metadados externos como
+-   Tratar `dbeasy.json`, `.env`, arquivos SQL e metadados externos como
     entradas que podem estar malformadas.
 -   Validar configurações antes de tentar conectar.
 -   Não executar SQL automaticamente ao abrir um workspace, uma aba ou
@@ -554,7 +554,7 @@ mensagens de resultado para atualizar o estado.
 
 ## 13. Critérios de aceitação da primeira versão
 
-1.  O usuário consegue registrar um arquivo `dbeas.json`, reiniciar a
+1.  O usuário consegue registrar um arquivo `dbeasy.json`, reiniciar a
     aplicação e ver o workspace novamente.
 2.  Configurações válidas conectam ao PostgreSQL; configurações
     inválidas mostram erros acionáveis sem impedir a abertura de outros

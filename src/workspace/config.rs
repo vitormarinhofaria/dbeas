@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Leitura, validação e resolução do arquivo `dbeas.json` (spec §3).
+//! Leitura, validação e resolução do arquivo `dbeasy.json` (spec §3).
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -19,7 +19,7 @@ pub const DEFAULT_PORT: u16 = 5432;
 /// que mensagens nunca exponham senhas ou outros segredos.
 #[derive(Debug, Clone, Error, PartialEq)]
 pub enum ConfigError {
-    #[error("o campo `{old}` foi renomeado para `{new}`; atualize o dbeas.json")]
+    #[error("o campo `{old}` foi renomeado para `{new}`; atualize o dbeasy.json")]
     RenamedField {
         old: &'static str,
         new: &'static str,
@@ -141,7 +141,7 @@ impl SslMode {
     }
 }
 
-/// Uma entrada do array do `dbeas.json`: válida ou com erro. O nome é mantido
+/// Uma entrada do array do `dbeasy.json`: válida ou com erro. O nome é mantido
 /// sempre que possível para identificar a entrada na barra lateral.
 #[derive(Debug, Clone)]
 pub struct Entry {
@@ -150,7 +150,7 @@ pub struct Entry {
     pub result: Result<ResolvedConfig, ConfigError>,
 }
 
-/// Carrega um `dbeas.json`. Erros no arquivo inteiro (leitura, JSON) retornam
+/// Carrega um `dbeasy.json`. Erros no arquivo inteiro (leitura, JSON) retornam
 /// `Err`; erros de uma entrada ficam na própria entrada, sem afetar as demais.
 pub fn load_file(path: &Path) -> Result<Vec<Entry>, ConfigError> {
     let text = std::fs::read_to_string(path).map_err(|e| ConfigError::Read {
@@ -217,7 +217,7 @@ fn classify_json_error(e: &serde_json::Error) -> &'static str {
 }
 
 /// Resolve e valida uma entrada (objeto do array). Caminhos relativos partem de
-/// `base_dir`, o diretório do `dbeas.json`.
+/// `base_dir`, o diretório do `dbeasy.json`.
 pub fn resolve_entry(
     obj: &Map<String, Value>,
     base_dir: &Path,
@@ -381,7 +381,7 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
-        let entries = parse(json, Path::new("/p/dbeas.json"), Path::new("/p"), env).unwrap();
+        let entries = parse(json, Path::new("/p/dbeasy.json"), Path::new("/p"), env).unwrap();
         assert_eq!(entries.len(), 1);
         entries.into_iter().next().unwrap().result
     }
@@ -478,7 +478,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(".env"), "U=do_arquivo\nP=segredo\n").unwrap();
         let json = r#"[{"name":"a","envFile":".env","dbName":"x","dbUser":"${env.U}","dbPass":"${env.P}"}]"#;
-        let entries = parse(json, &dir.path().join("dbeas.json"), dir.path(), Vec::new()).unwrap();
+        let entries = parse(json, &dir.path().join("dbeasy.json"), dir.path(), Vec::new()).unwrap();
         let c = entries[0].result.as_ref().unwrap();
         assert_eq!(c.user, "do_arquivo");
         assert_eq!(c.password.expose(), Some("segredo"));
@@ -577,7 +577,7 @@ mod tests {
     fn one_bad_entry_does_not_affect_others() {
         let entries = parse(
             r#"[{"name":"ok","dbName":"x","dbUser":"u"}, {"name":"bad"}, 42]"#,
-            Path::new("/p/dbeas.json"),
+            Path::new("/p/dbeasy.json"),
             Path::new("/p"),
             Vec::new(),
         )
@@ -591,13 +591,13 @@ mod tests {
     #[test]
     fn file_level_errors() {
         assert!(matches!(
-            parse("{", Path::new("/p/dbeas.json"), Path::new("/p"), Vec::new()),
+            parse("{", Path::new("/p/dbeasy.json"), Path::new("/p"), Vec::new()),
             Err(ConfigError::Json { .. })
         ));
         assert_eq!(
             parse(
                 "{}",
-                Path::new("/p/dbeas.json"),
+                Path::new("/p/dbeasy.json"),
                 Path::new("/p"),
                 Vec::new()
             )

@@ -1,18 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Testes de TLS contra servidores reais. Rodam apenas com `DBEAS_TEST_TLS`
+//! Testes de TLS contra servidores reais. Rodam apenas com `DBEASY_TEST_TLS`
 //! definido como `ip_com_tls,ip_sem_tls,ca.crt,outra-ca.crt`. Procedimento
 //! (containers sem porta mapeada): ai-content/knowledge-base/arquitetura/tls.md
 
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use dbeas::connection;
-use dbeas::query::Value;
-use dbeas::tls;
-use dbeas::workspace::config::Secret;
-use dbeas::workspace::{ResolvedConfig, SslMode};
+use dbeasy::connection;
+use dbeasy::query::Value;
+use dbeasy::tls;
+use dbeasy::workspace::config::Secret;
+use dbeasy::workspace::{ResolvedConfig, SslMode};
 
 struct Env {
     tls_host: String,
@@ -22,10 +22,10 @@ struct Env {
 }
 
 fn env() -> Option<Env> {
-    let raw = std::env::var("DBEAS_TEST_TLS").ok()?;
+    let raw = std::env::var("DBEASY_TEST_TLS").ok()?;
     let parts: Vec<&str> = raw.split(',').collect();
     let [tls_host, plain_host, ca, other_ca] = parts.as_slice() else {
-        panic!("DBEAS_TEST_TLS malformado")
+        panic!("DBEASY_TEST_TLS malformado")
     };
     Some(Env {
         tls_host: tls_host.to_string(),
@@ -40,9 +40,9 @@ fn config(host: &str, ssl_mode: SslMode, root: Option<&PathBuf>) -> ResolvedConf
         name: "tls".into(),
         host: host.into(),
         port: 5432,
-        user: "dbeas".into(),
-        password: Secret::new(Some("dbeas".into())),
-        db_name: "dbeas_tls".into(),
+        user: "dbeasy".into(),
+        password: Secret::new(Some("dbeasy".into())),
+        db_name: "dbeasy_tls".into(),
         read_only: false,
         require_transaction: false,
         sql_files_dir: None,
@@ -150,12 +150,12 @@ async fn verify_full_checks_the_host_name() {
         let ca = e.ca.clone();
         async move {
             let mut pg = tokio_postgres::Config::new();
-            pg.host("outro-nome.dbeas.test")
+            pg.host("outro-nome.dbeasy.test")
                 .hostaddr(ip)
                 .port(5432)
-                .user("dbeas")
-                .password("dbeas")
-                .dbname("dbeas_tls")
+                .user("dbeasy")
+                .password("dbeasy")
+                .dbname("dbeasy_tls")
                 .ssl_mode(tls::negotiation(mode));
             let (connector, _) = tls::connector(mode, Some(&ca)).unwrap();
             pg.connect(connector).await.map(|(client, conn)| {

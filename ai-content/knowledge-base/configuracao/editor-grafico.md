@@ -1,4 +1,4 @@
-# Editor gráfico do `dbeas.json`
+# Editor gráfico do `dbeasy.json`
 
 Pedido do usuário em 2026-10-13. Ainda não está descrito na spec.
 Lógica em `src/workspace/editor.rs` (`Document` com um `Form` por entrada,
@@ -36,7 +36,7 @@ testada); tela em `settings_view`/`settings_tabs` (`src/app/view.rs`); fluxo em
   Mostrar); referência `${env.X}` fica legível.
 - `sqlFilesDir` tem o botão "Escolher…" (pedido do usuário em 2026-10-13):
   seletor de diretório (`rfd::pick_folder`) que abre no diretório do
-  `dbeas.json` editado. O escolhido vira `./sub` (ou `.`) se estiver abaixo do
+  `dbeasy.json` editado. O escolhido vira `./sub` (ou `.`) se estiver abaixo do
   diretório do json, senão caminho absoluto (`Document::dir_value`, compara
   caminhos canonicalizados). O resultado vai para a aba que estava ativa ao
   abrir o seletor. O campo continua editável como texto.
@@ -84,7 +84,7 @@ validação falha ou durante o teste.
 - `env_file` (nome antigo) é regravado como `envFile` no mesmo lugar.
 - Recusa gravar se o arquivo mudou no disco desde a abertura (compara o texto).
 - Mantém a indentação do arquivo; `fsutil::atomic_write` preserva as permissões
-  do arquivo substituído (um `dbeas.json` com senha pode ser `0600`).
+  do arquivo substituído (um `dbeasy.json` com senha pode ser `0600`).
 - Depois de gravar, recarrega os workspaces. Renomear (`name` faz parte do
   `WorkspaceId`) mantém abas, conexão e sessão: `reload_workspaces_keeping`
   casa todas as entradas do arquivo gravado pela posição (o editor nunca remove

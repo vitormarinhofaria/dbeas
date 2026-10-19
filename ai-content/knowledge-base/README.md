@@ -1,7 +1,7 @@
-# Base de conhecimento do DBeas
+# Base de conhecimento do DBeasy
 
 Fonte principal de conhecimento e memória do projeto. Consulte aqui antes de
-trabalhar em qualquer parte do DBeas e registre aqui tudo o que for aprendido ou
+trabalhar em qualquer parte do DBeasy e registre aqui tudo o que for aprendido ou
 decidido.
 
 ## Regras
@@ -17,7 +17,7 @@ decidido.
 ## Categorias
 
 - `arquitetura/` — módulos, fronteiras, fluxos de dados, decisões técnicas.
-- `configuracao/` — `dbeas.json`, configuração global, resolução de variáveis.
+- `configuracao/` — `dbeasy.json`, configuração global, resolução de variáveis.
 - `design/` — aparência, layout e componentes visuais.
 - `usabilidade/` — comportamento da interface, interação e atalhos.
 - `progresso/` — estado da implementação e próximos passos (continuidade entre sessões).
@@ -33,9 +33,9 @@ decidido.
 - [Licença e dependências](arquitetura/licencas.md) — GPL-3.0-or-later, cabeçalho SPDX obrigatório, cargo-deny e cargo-about.
 - [Empacotamento .deb](arquitetura/empacotamento-deb.md) — `scripts/package-deb.sh` (container Debian 12; instala em Ubuntu 22.04+ e Debian 12+), APP_ID/.desktop/ícone, dependências carregadas por dlopen.
 - [Conexões TLS](arquitetura/tls.md) — sslMode/sslRootCert, rustls+ring, selo de TLS e `scripts/test-tls.sh` (containers sem porta, Docker rootless).
-- [Regras do dbeas.json](configuracao/dbeas-json.md) — validação, interpolação e padrões como implementados.
-- [Editor gráfico do dbeas.json](configuracao/editor-grafico.md) — ícone ⚙ na sidebar, uma aba por entrada e "+ nova entrada", testar conexão com resumo, prévias de `${env.X}` (senha só com asteriscos), gravação que preserva o arquivo.
-- [Adicionar ou criar workspace](usabilidade/adicionar-criar-workspace.md) — botão Adicionar vira Criar para diretório sem dbeas.json ou caminho novo; confirma e abre o editor.
+- [Regras do dbeasy.json](configuracao/dbeasy-json.md) — validação, interpolação e padrões como implementados.
+- [Editor gráfico do dbeasy.json](configuracao/editor-grafico.md) — ícone ⚙ na sidebar, uma aba por entrada e "+ nova entrada", testar conexão com resumo, prévias de `${env.X}` (senha só com asteriscos), gravação que preserva o arquivo.
+- [Adicionar ou criar workspace](usabilidade/adicionar-criar-workspace.md) — botão Adicionar vira Criar para diretório sem dbeasy.json ou caminho novo; confirma e abre o editor.
 - [Menu de contexto das abas](usabilidade/menu-contexto-abas.md) — clique direito: fechar aba/à esquerda/à direita/tudo; diálogo único para abas sujas.
 - [Tela "Sobre"](usabilidade/tela-sobre.md) — botão na barra de status: versão, copyright, aviso e texto da GPL, licenças de terceiros, código-fonte.
 - [Atalhos](usabilidade/atalhos.md) — mapa central e conflitos documentados.
@@ -44,4 +44,4 @@ decidido.
 - [Explorador de arquivos SQL](usabilidade/arquivos-sql.md) — navegação restrita ao sqlFilesDir e criação de arquivos.
 - [Quando SQL é executado](usabilidade/execucao-sql.md) — conexão, abertura de tabela, abas restauradas em branco (reexecutam o SELECT ao clicar), nada de execução automática de SQL do usuário.
 
-- [Identificação do workspace na barra lateral](usabilidade/identificacao-workspace-sidebar.md) — usar `name` da entrada do `dbeas.json`, não o nome do arquivo.
+- [Identificação do workspace na barra lateral](usabilidade/identificacao-workspace-sidebar.md) — usar `name` da entrada do `dbeasy.json`, não o nome do arquivo.

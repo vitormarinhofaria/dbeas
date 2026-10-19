@@ -1,4 +1,4 @@
-# Regras do `dbeas.json` implementadas
+# Regras do `dbeasy.json` implementadas
 
 Referência: spec §3; código em `src/workspace/config.rs`.
 
@@ -11,7 +11,7 @@ Referência: spec §3; código em `src/workspace/config.rs`.
   valores dentro de `env` **não** são interpolados (são literais).
 - `envFile` informado mas ausente ou ilegível é erro de configuração.
 - **Nome dos campos em camelCase** (decisão do usuário em 2026-10-09): o antigo
-  `env_file` virou `envFile`. Um `dbeas.json` que ainda use `env_file` recebe o erro
+  `env_file` virou `envFile`. Um `dbeasy.json` que ainda use `env_file` recebe o erro
   "o campo `env_file` foi renomeado para `envFile`" (`ConfigError::RenamedField`),
   em vez de o campo ser ignorado em silêncio.
 - `dbUser` ausente ou vazio: usa `$USER`, como o libpq. Referência não resolvida é
@@ -19,8 +19,8 @@ Referência: spec §3; código em `src/workspace/config.rs`.
 - `dbPort` pode ser número ou string; vazio vira 5432; fora de 1–65535 é erro.
 - `readOnly`/`requireTransaction` precisam ser booleanos JSON (`"true"` é erro).
 - Caminhos relativos (`envFile`, `sqlFilesDir`) são resolvidos a partir do
-  diretório do `dbeas.json`, com normalização léxica.
-- `sslMode` (padrão `prefer`) e `sslRootCert` (relativo ao `dbeas.json`): ver
+  diretório do `dbeasy.json`, com normalização léxica.
+- `sslMode` (padrão `prefer`) e `sslRootCert` (relativo ao `dbeasy.json`): ver
   [TLS](../arquitetura/tls.md). Valor de `sslMode` fora da lista é erro de
   configuração; aceitam `${env.NOME}`.
 - Mensagens de erro nunca incluem valores resolvidos; `Secret` oculta a senha em

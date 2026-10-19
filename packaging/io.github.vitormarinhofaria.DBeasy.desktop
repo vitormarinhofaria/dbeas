@@ -1,13 +1,13 @@
 [Desktop Entry]
 Type=Application
-Name=DBeas
+Name=DBeasy
 GenericName=PostgreSQL Client
 GenericName[pt_BR]=Cliente PostgreSQL
 Comment=Desktop PostgreSQL client with workspaces, SQL editor and data editing
 Comment[pt_BR]=Cliente desktop para PostgreSQL com workspaces, editor SQL e edição de dados
-Exec=dbeas
-Icon=io.github.vitormarinhofaria.DBeas
+Exec=dbeasy
+Icon=io.github.vitormarinhofaria.DBeasy
 Terminal=false
 Categories=Development;Database;
 Keywords=postgres;postgresql;sql;database;
-StartupWMClass=io.github.vitormarinhofaria.DBeas
+StartupWMClass=io.github.vitormarinhofaria.DBeasy

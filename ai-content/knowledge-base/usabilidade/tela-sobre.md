@@ -14,7 +14,7 @@ Botão **Sobre** na barra de status, ao lado de "Atalhos". Abre o modal
 - **Licenças de terceiros**: o `THIRD_PARTY_LICENSES.html` vai **embutido no
   binário** (`about::THIRD_PARTY_HTML`, copiado pelo `build.rs`). Ao clicar, o
   conteúdo embutido é regravado (`about::write_third_party`) em
-  `$XDG_RUNTIME_DIR/dbeas/` (ou `~/.cache/dbeas/`, nunca o `/tmp` compartilhado)
+  `$XDG_RUNTIME_DIR/dbeasy/` (ou `~/.cache/dbeasy/`, nunca o `/tmp` compartilhado)
   e aberto com `xdg-open`. Como o arquivo é regravado a cada clique, o que se vê é
   sempre o conteúdo do binário: alterar o arquivo em disco não muda nada. Decisão do
   usuário (2026-10-13): sempre disponível e só alterável trocando o binário.

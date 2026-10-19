@@ -1,5 +1,5 @@
 [package]
-name = "dbeas"
+name = "dbeasy"
 version = "0.1.0"
 edition = "2024"
 description = "Cliente desktop para PostgreSQL com workspaces, editor SQL e edição de dados"
@@ -41,7 +41,7 @@ license-file = ["LICENSE", "0"]
 section = "database"
 priority = "optional"
 extended-description = """\
-DBeas é um cliente desktop para PostgreSQL: workspaces definidos em dbeas.json, \
+DBeasy é um cliente desktop para PostgreSQL: workspaces definidos em dbeasy.json, \
 editor SQL com autocomplete e diagnóstico de sintaxe, grade de resultados com \
 edição de dados e conexões TLS."""
 # $auto cobre as bibliotecas ligadas diretamente; winit e wgpu carregam as de
@@ -51,8 +51,8 @@ depends = "$auto, libxkbcommon0, libwayland-client0, libx11-6, libx11-xcb1, libx
 # portal fornece os diálogos de arquivo/diretório (rfd com xdg-portal).
 recommends = "libvulkan1, mesa-vulkan-drivers, libegl1, xdg-desktop-portal, fonts-dejavu-core"
 assets = [
-    ["target/release/dbeas", "usr/bin/", "755"],
-    ["packaging/io.github.vitormarinhofaria.DBeas.desktop", "usr/share/applications/", "644"],
-    ["packaging/io.github.vitormarinhofaria.DBeas.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
-    ["THIRD_PARTY_LICENSES.html", "usr/share/doc/dbeas/", "644"],
+    ["target/release/dbeasy", "usr/bin/", "755"],
+    ["packaging/io.github.vitormarinhofaria.DBeasy.desktop", "usr/share/applications/", "644"],
+    ["packaging/io.github.vitormarinhofaria.DBeasy.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["THIRD_PARTY_LICENSES.html", "usr/share/doc/dbeasy/", "644"],
 ]

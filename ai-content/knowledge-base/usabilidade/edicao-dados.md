@@ -37,7 +37,7 @@ Spec §6.1–6.2. Código: `src/data_edit.rs` (regras puras, testadas),
   pelo `RETURNING` e substitui o valor na grade, sem reexecutar a consulta.
 - Cada `UPDATE` precisa afetar exatamente 1 linha; senão o lote inteiro é desfeito
   ("linha não encontrada (alterada ou removida por outra sessão?)").
-- Com transação ativa: o lote roda sob `SAVEPOINT dbeas_grade`; falha volta ao
+- Com transação ativa: o lote roda sob `SAVEPOINT dbeasy_grade`; falha volta ao
   savepoint e a transação do usuário continua válida. As alterações entram no
   resumo do COMMIT ("Alterações pela grade": chave, coluna, antes → depois).
 - Sem transação, fora de `requireTransaction`: `BEGIN ... COMMIT` próprio (lote

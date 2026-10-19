@@ -1,6 +1,6 @@
 # Licença do projeto e das dependências
 
-**Decisão (usuário, 2026-10-09):** o DBeas é distribuído sob **GPL-3.0-or-later**.
+**Decisão (usuário, 2026-10-09):** o DBeasy é distribuído sob **GPL-3.0-or-later**.
 
 ## Onde está declarada
 
@@ -54,7 +54,7 @@
   `cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html`
 - O arquivo gerado é **embutido no binário** pelo `build.rs` (a tela "Sobre" o
   abre, ver [Tela "Sobre"](../usabilidade/tela-sobre.md)). O .deb também o
-  instala em `/usr/share/doc/dbeas/`.
+  instala em `/usr/share/doc/dbeasy/`.
 - **Build de release falha** se o arquivo não existir ou for mais antigo que o
   `Cargo.lock`. Build de debug embute uma página provisória.
 - Regenerar sempre que o `Cargo.lock` mudar. Ele não é versionado (`.gitignore`),

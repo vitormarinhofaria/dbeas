@@ -2,5 +2,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 fn main() -> iced::Result {
-    dbeas::app::run()
+    dbeasy::app::run()
 }

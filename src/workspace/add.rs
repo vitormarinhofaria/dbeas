@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Diálogo "Adicionar workspace": decide se o caminho informado registra um
-//! `dbeas.json` existente ou cria um novo.
+//! `dbeasy.json` existente ou cria um novo.
 
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Nome do arquivo criado quando o caminho informado é um diretório.
-pub const FILE_NAME: &str = "dbeas.json";
+pub const FILE_NAME: &str = "dbeasy.json";
 
 /// O que o botão do diálogo fará com o caminho informado.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,13 +22,13 @@ pub enum Target {
 }
 
 /// Interpreta o texto digitado: um arquivo existente é registrado; um
-/// diretório usa o `dbeas.json` dele, criando-o se não houver; um caminho
+/// diretório usa o `dbeasy.json` dele, criando-o se não houver; um caminho
 /// inexistente vira um arquivo novo (se terminar em `.json`) ou um diretório
-/// novo com `dbeas.json` dentro.
+/// novo com `dbeasy.json` dentro.
 pub fn resolve(input: &str) -> Target {
     let raw = input.trim();
     if raw.is_empty() {
-        return Target::Invalid("Informe o caminho de um dbeas.json ou de um diretório.".into());
+        return Target::Invalid("Informe o caminho de um dbeasy.json ou de um diretório.".into());
     }
     let path = match raw.strip_prefix("~/") {
         Some(rest) => dirs::home_dir().unwrap_or_default().join(rest),
@@ -49,7 +49,7 @@ pub fn resolve(input: &str) -> Target {
         path.join(FILE_NAME)
     };
     if !file.is_absolute() {
-        return Target::Invalid("Para criar um dbeas.json, informe um caminho absoluto.".into());
+        return Target::Invalid("Para criar um dbeasy.json, informe um caminho absoluto.".into());
     }
     if file.exists() {
         return Target::Invalid(format!("{} existe e não é um arquivo.", file.display()));

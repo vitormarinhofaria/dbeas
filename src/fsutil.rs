@@ -25,7 +25,7 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> io::Result<()> {
 
     let result = (|| {
         let mut file = fs::File::create(&tmp_path)?;
-        // Mantém as permissões do arquivo substituído: um dbeas.json com
+        // Mantém as permissões do arquivo substituído: um dbeasy.json com
         // senha pode estar restrito ao dono (0600).
         if let Ok(meta) = fs::metadata(path) {
             file.set_permissions(meta.permissions())?;
@@ -100,7 +100,7 @@ mod tests {
     fn atomic_write_keeps_permissions() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("dbeas.json");
+        let path = dir.path().join("dbeasy.json");
         fs::write(&path, b"[]").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         atomic_write(&path, b"[{}]").unwrap();

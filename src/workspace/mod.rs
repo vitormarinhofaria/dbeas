@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Workspaces: carregamento dos `dbeas.json` registrados, identificação e
+//! Workspaces: carregamento dos `dbeasy.json` registrados, identificação e
 //! nomes exibidos (spec §3, §4.1).
 
 pub mod add;
@@ -132,21 +132,21 @@ mod tests {
         fs::create_dir_all(a.join(".git")).unwrap();
         fs::create_dir_all(&b).unwrap();
         let json = r#"[{"name":"Dev","dbName":"x","dbUser":"u"},{"name":"Prod","dbName":"x","dbUser":"u"}]"#;
-        fs::write(a.join("dbeas.json"), json).unwrap();
+        fs::write(a.join("dbeasy.json"), json).unwrap();
         fs::write(
-            b.join("dbeas.json"),
+            b.join("dbeasy.json"),
             r#"[{"name":"Dev","dbName":"y","dbUser":"u"}]"#,
         )
         .unwrap();
 
-        let all = load_all(&[a.join("dbeas.json"), b.join("dbeas.json")]);
+        let all = load_all(&[a.join("dbeasy.json"), b.join("dbeasy.json")]);
         let names: Vec<_> = all.iter().map(|d| d.display_name.as_str()).collect();
         assert_eq!(names, ["Dev (repo-a)", "Prod", "Dev (conf)"]);
     }
 
     #[test]
     fn missing_file_yields_error_descriptor() {
-        let all = load_all(&[PathBuf::from("/nao/existe/dbeas.json")]);
+        let all = load_all(&[PathBuf::from("/nao/existe/dbeasy.json")]);
         assert_eq!(all.len(), 1);
         assert!(matches!(all[0].config, Err(ConfigError::Read { .. })));
     }
@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn ids_are_unique_for_duplicate_names_in_same_file() {
         let root = tempfile::tempdir().unwrap();
-        let f = root.path().join("dbeas.json");
+        let f = root.path().join("dbeasy.json");
         fs::write(
             &f,
             r#"[{"name":"A","dbName":"x","dbUser":"u"},{"name":"A","dbName":"y","dbUser":"u"}]"#,

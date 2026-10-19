@@ -1,12 +1,12 @@
-# DBeas
+# DBeasy
 
-Cliente desktop PostgreSQL em Rust + Iced. Especificação: `dbeas-spec-inicial.md`.
+Cliente desktop PostgreSQL em Rust + Iced. Especificação: `dbeasy-spec-inicial.md`.
 
 ## Base de conhecimento
 
 `ai-content/knowledge-base/` é a base para buscar conhecimento sobre o projeto.
 Comece pelo índice em `ai-content/knowledge-base/README.md` e consulte os arquivos
-relevantes antes de trabalhar em qualquer parte do DBeas.
+relevantes antes de trabalhar em qualquer parte do DBeasy.
 
 Todo conhecimento e memória de projeto deve ser escrito nesse diretório — em
 arquivos pequenos e específicos, organizados em subdiretórios por categoria

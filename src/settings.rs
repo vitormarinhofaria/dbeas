@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Vitor Marinho Faria
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Configuração global: registro dos arquivos `dbeas.json` (spec §3.4).
+//! Configuração global: registro dos arquivos `dbeasy.json` (spec §3.4).
 
 use std::path::{Path, PathBuf};
 
@@ -27,11 +27,11 @@ impl Default for Settings {
     }
 }
 
-/// `~/.config/dbeas/config`
+/// `~/.config/dbeasy/config`
 pub fn default_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".config"))
-        .join("dbeas")
+        .join("dbeasy")
         .join("config")
 }
 
@@ -94,11 +94,11 @@ mod tests {
     #[test]
     fn register_dedupes_after_normalization() {
         let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("dbeas.json");
+        let file = dir.path().join("dbeasy.json");
         std::fs::write(&file, "[]").unwrap();
         let mut s = Settings::default();
         assert!(s.register(&file));
-        assert!(!s.register(&dir.path().join(".").join("dbeas.json")));
+        assert!(!s.register(&dir.path().join(".").join("dbeasy.json")));
         assert_eq!(s.workspaces.len(), 1);
         assert!(s.unregister(&file));
         assert!(s.workspaces.is_empty());
@@ -108,10 +108,10 @@ mod tests {
     #[test]
     fn round_trip_and_missing_file() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("dbeas").join("config");
+        let path = dir.path().join("dbeasy").join("config");
         assert_eq!(Settings::load(&path).unwrap(), Settings::default());
         let mut s = Settings::default();
-        s.workspaces.push(PathBuf::from("/a/dbeas.json"));
+        s.workspaces.push(PathBuf::from("/a/dbeasy.json"));
         s.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), s);
     }

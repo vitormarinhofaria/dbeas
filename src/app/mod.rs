@@ -39,7 +39,7 @@ use state::{ErrorInfo, Tab, Workspace};
 
 /// Identificador da aplicação no desktop: casa a janela com o arquivo
 /// `.desktop` e o ícone instalados pelo pacote (ver `packaging/`).
-pub const APP_ID: &str = "io.github.vitormarinhofaria.DBeas";
+pub const APP_ID: &str = "io.github.vitormarinhofaria.DBeasy";
 
 pub fn run() -> iced::Result {
     iced::application(App::boot, App::update, App::view)
@@ -211,7 +211,7 @@ pub enum Modal {
         file: PathBuf,
         names: Vec<String>,
     },
-    /// Edição gráfica das entradas de um `dbeas.json`, uma por aba.
+    /// Edição gráfica das entradas de um `dbeasy.json`, uma por aba.
     EditWorkspace {
         doc: Box<config_editor::Document>,
         error: Option<String>,
@@ -525,8 +525,8 @@ impl App {
 
     fn title(&self) -> String {
         match self.active_ws() {
-            Some(ws) => format!("DBeas — {}", ws.desc.display_name),
-            None => "DBeas".into(),
+            Some(ws) => format!("DBeasy — {}", ws.desc.display_name),
+            None => "DBeasy".into(),
         }
     }
 
@@ -733,8 +733,8 @@ impl App {
             Message::BrowseWorkspaceFile => Task::perform(
                 async {
                     rfd::AsyncFileDialog::new()
-                        .set_title("Selecione um dbeas.json")
-                        .add_filter("dbeas.json", &["json"])
+                        .set_title("Selecione um dbeasy.json")
+                        .add_filter("dbeasy.json", &["json"])
                         .pick_file()
                         .await
                         .map(|f| f.path().to_path_buf())
@@ -744,7 +744,7 @@ impl App {
             Message::BrowseWorkspaceDir => Task::perform(
                 async {
                     rfd::AsyncFileDialog::new()
-                        .set_title("Selecione o diretório do dbeas.json")
+                        .set_title("Selecione o diretório do dbeasy.json")
                         .pick_folder()
                         .await
                         .map(|f| f.path().to_path_buf())
@@ -798,7 +798,7 @@ impl App {
                 let Some(entry) = ws.desc.entry else {
                     let error = ws.desc.config.as_ref().err().map(ToString::to_string);
                     self.notify_error(format!(
-                        "O arquivo não pôde ser lido como dbeas.json; corrija-o num editor de texto{}",
+                        "O arquivo não pôde ser lido como dbeasy.json; corrija-o num editor de texto{}",
                         error.map(|e| format!(": {e}")).unwrap_or_default()
                     ));
                     return Task::none();
@@ -1894,7 +1894,7 @@ impl App {
                 }
                 // Gravação síncrona: a janela fecha logo em seguida.
                 if let Err(e) = self.snapshot().save(&self.session_path) {
-                    eprintln!("dbeas: {e}");
+                    eprintln!("dbeasy: {e}");
                 }
                 window::close(id).chain(iced::exit())
             }
@@ -1930,7 +1930,7 @@ impl App {
     // ------------------------------------------------------------------
     // Workspaces
 
-    /// Recarrega todos os `dbeas.json` registrados, preservando o estado em
+    /// Recarrega todos os `dbeasy.json` registrados, preservando o estado em
     /// execução dos workspaces que continuam existindo.
     fn reload_workspaces(&mut self) -> Task<Message> {
         self.reload_workspaces_keeping(None)
@@ -2186,7 +2186,7 @@ impl App {
         }
     }
 
-    /// Registra o `dbeas.json` informado. Se ele ainda não existe, pede
+    /// Registra o `dbeasy.json` informado. Se ele ainda não existe, pede
     /// confirmação, cria o arquivo e abre o editor gráfico da entrada criada.
     fn add_workspace(&mut self) -> Task<Message> {
         let Some(Modal::AddWorkspace {

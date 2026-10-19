@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Gera o pacote .deb em target/debian/. Verifica licenças e regenera os avisos
-# de terceiros (que vão em /usr/share/doc/dbeas) antes de empacotar.
+# de terceiros (que vão em /usr/share/doc/dbeasy) antes de empacotar.
 #
 # Uso: scripts/package-deb.sh          # em container Debian 12 (pede glibc 2.35):
 #                                      # instala em Ubuntu 22.04+ e Debian 12+
@@ -14,7 +14,7 @@
 #                 cargo install --locked cargo-about --features cli
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IMAGE=dbeas-deb-builder
+IMAGE=dbeasy-deb-builder
 
 if [[ "${1:-}" == "--local" ]]; then
     shift
@@ -30,6 +30,6 @@ docker build -t "$IMAGE" -f "$ROOT/packaging/Dockerfile.deb" "$ROOT/packaging"
 # o cache do registro do cargo fica num volume para builds seguintes.
 docker run --rm \
     -v "$ROOT":/src -w /src \
-    -v dbeas-cargo-registry:/usr/local/cargo/registry \
+    -v dbeasy-cargo-registry:/usr/local/cargo/registry \
     -e CARGO_TARGET_DIR=/src/target/deb-bookworm \
     "$IMAGE" scripts/package-deb.sh --local --output target/debian "$@"

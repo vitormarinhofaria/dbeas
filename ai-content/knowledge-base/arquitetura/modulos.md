@@ -9,7 +9,7 @@ Segue a §11 da spec. Crate com `lib.rs` (tudo testável) e `main.rs` mínimo.
 | `app/view.rs` | Layout: sidebar, cabeçalho, abas, resultados/editor, status, modais. |
 | `app/quick_open.rs` | Itens e pontuação fuzzy do `Ctrl+P`. |
 | `workspace/` | `config.rs` (parse/validação/resolução), `env.rs` (`${env.X}`), `mod.rs` (carregar registrados, ids, nomes). |
-| `settings.rs` | Registro global de arquivos `dbeas.json`. |
+| `settings.rs` | Registro global de arquivos `dbeasy.json`. |
 | `session.rs` | Formato serializável da sessão (versão 1). |
 | `connection.rs` | Ator por workspace: execução, cursor de paginação, catálogo, cancelamento. |
 | `metadata.rs` | Consultas ao `pg_catalog`, `Catalog`, `quote_ident`, SELECT inicial de tabela. |
@@ -30,5 +30,5 @@ gravar a sessão ao fechar a janela (precisa terminar antes de sair).
 
 ## Identidade
 
-`WorkspaceId` = `"<caminho absoluto do dbeas.json>#<name>"` (com `#n` se o nome se
+`WorkspaceId` = `"<caminho absoluto do dbeasy.json>#<name>"` (com `#n` se o nome se
 repetir no mesmo arquivo). É a chave da sessão.

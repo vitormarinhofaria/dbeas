@@ -37,7 +37,7 @@ Selo no cabeçalho do workspace conectado: "TLS verificado" (verify-full), "TLS
 - Unitários em `src/tls.rs` e `workspace/config.rs`.
 - Integração em `tests/tls.rs` (todos os modos, CA certa/errada, CAs do sistema,
   fallback do `prefer`, nome divergente via `hostaddr`). Rodam com
-  **`scripts/test-tls.sh`**: cria uma CA de teste, a rede `dbeas-test-net`
+  **`scripts/test-tls.sh`**: cria uma CA de teste, a rede `dbeasy-test-net`
   (172.31.250.0/24) e dois containers PostgreSQL 17 **sem porta mapeada** (com TLS
   em .10, sem TLS em .11) e executa os testes. `scripts/test-tls.sh --clean`
   remove tudo.
@@ -47,4 +47,4 @@ Selo no cabeçalho do workspace conectado: "TLS verificado" (verify-full), "TLS
   (o PID de `docker.pid` não serve: o namespace é do processo filho). Fora do
   rootless, roda direto.
 - O app também pode ser executado no namespace para teste manual:
-  `nsenter ... ./target/debug/dbeas` (o Wayland continua acessível).
+  `nsenter ... ./target/debug/dbeasy` (o Wayland continua acessível).

@@ -2,27 +2,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Testes contra um PostgreSQL real. Executados apenas quando
-//! `DBEAS_TEST_PG` estiver definido no formato `host:porta:usuario:senha:banco`.
+//! `DBEASY_TEST_PG` estiver definido no formato `host:porta:usuario:senha:banco`.
 //!
 //! Exemplo:
-//! docker run -d --name dbeas-test-pg -e POSTGRES_PASSWORD=dbeas -e POSTGRES_USER=dbeas \
-//!   -e POSTGRES_DB=dbeas_dev -p 127.0.0.1:55432:5432 postgres:17
-//! DBEAS_TEST_PG=127.0.0.1:55432:dbeas:dbeas:dbeas_dev cargo test --test postgres
+//! docker run -d --name dbeasy-test-pg -e POSTGRES_PASSWORD=dbeasy -e POSTGRES_USER=dbeasy \
+//!   -e POSTGRES_DB=dbeasy_dev -p 127.0.0.1:55432:5432 postgres:17
+//! DBEASY_TEST_PG=127.0.0.1:55432:dbeasy:dbeasy:dbeasy_dev cargo test --test postgres
 
-use dbeas::connection;
-use dbeas::query::{Value, split};
-use dbeas::workspace::ResolvedConfig;
-use dbeas::workspace::config::Secret;
+use dbeasy::connection;
+use dbeasy::query::{Value, split};
+use dbeasy::workspace::ResolvedConfig;
+use dbeasy::workspace::config::Secret;
 
 fn config(read_only: bool) -> Option<ResolvedConfig> {
     config_with(read_only, false)
 }
 
 fn config_with(read_only: bool, require_transaction: bool) -> Option<ResolvedConfig> {
-    let raw = std::env::var("DBEAS_TEST_PG").ok()?;
+    let raw = std::env::var("DBEASY_TEST_PG").ok()?;
     let parts: Vec<&str> = raw.split(':').collect();
     let [host, port, user, pass, db] = parts.as_slice() else {
-        panic!("DBEAS_TEST_PG malformado")
+        panic!("DBEASY_TEST_PG malformado")
     };
     Some(ResolvedConfig {
         name: "teste".into(),
@@ -34,7 +34,7 @@ fn config_with(read_only: bool, require_transaction: bool) -> Option<ResolvedCon
         read_only,
         require_transaction,
         sql_files_dir: None,
-        ssl_mode: dbeas::workspace::SslMode::Disable,
+        ssl_mode: dbeasy::workspace::SslMode::Disable,
         ssl_root_cert: None,
     })
 }
@@ -48,20 +48,20 @@ async fn executes_queries_pages_and_reads_catalog() {
     let Some(cfg) = config(false) else { return };
     let conn = connection::connect(cfg).await.expect("conecta");
 
-    let setup = "drop table if exists dbeas_t; \
-                 create table dbeas_t (id serial primary key, nome text, valor numeric(10,2), criado timestamptz default now()); \
-                 insert into dbeas_t (nome, valor) select 'n' || g, g * 1.5 from generate_series(1, 1200) g; \
-                 insert into dbeas_t (nome, valor) values (null, null), ('', 0)";
+    let setup = "drop table if exists dbeasy_t; \
+                 create table dbeasy_t (id serial primary key, nome text, valor numeric(10,2), criado timestamptz default now()); \
+                 insert into dbeasy_t (nome, valor) select 'n' || g, g * 1.5 from generate_series(1, 1200) g; \
+                 insert into dbeasy_t (nome, valor) values (null, null), ('', 0)";
     conn.execute(setup.into(), all(setup)).await.expect("setup");
 
-    let sql = "select id, nome, valor from dbeas_t order by id".to_string();
+    let sql = "select id, nome, valor from dbeasy_t order by id".to_string();
     let len = sql.len();
     let out = conn.execute(sql, vec![0..len]).await.expect("select");
     let rs = out.result.expect("resultado");
     assert_eq!(rs.columns.len(), 3);
     assert_eq!(rs.columns[2].type_name, "numeric");
     assert!(rs.columns[0].table_oid.is_some());
-    assert_eq!(rs.rows.len(), dbeas::query::PAGE_SIZE);
+    assert_eq!(rs.rows.len(), dbeasy::query::PAGE_SIZE);
     assert!(rs.has_more);
     assert_eq!(rs.rows[0][2], Value::Numeric("1.50".into()));
 
@@ -76,7 +76,7 @@ async fn executes_queries_pages_and_reads_catalog() {
     }
     assert_eq!(total, 1202);
 
-    let sql = "select nome from dbeas_t where id > 1200 order by id".to_string();
+    let sql = "select nome from dbeasy_t where id > 1200 order by id".to_string();
     let len = sql.len();
     let rs = conn
         .execute(sql, vec![0..len])
@@ -89,7 +89,7 @@ async fn executes_queries_pages_and_reads_catalog() {
 
     let catalog = conn.catalog().await.expect("catálogo");
     let rel = catalog
-        .find("public", "dbeas_t")
+        .find("public", "dbeasy_t")
         .expect("tabela no catálogo");
     assert_eq!(
         rel.columns
@@ -116,7 +116,7 @@ async fn error_positions_are_reported_in_script_coordinates() {
 async fn read_only_blocks_writes_in_two_layers() {
     let Some(cfg) = config(true) else { return };
     let rw = connection::connect(config(false).unwrap()).await.unwrap();
-    let setup = "create sequence if not exists dbeas_seq".to_string();
+    let setup = "create sequence if not exists dbeasy_seq".to_string();
     let len = setup.len();
     rw.execute(setup, vec![0..len]).await.unwrap();
     let conn = connection::connect(cfg).await.unwrap();
@@ -127,7 +127,7 @@ async fn read_only_blocks_writes_in_two_layers() {
     assert!(err.message.contains("somente leitura"), "{}", err.message);
 
     // Segunda camada: a sessão do servidor está em modo somente leitura.
-    let sql = "select nextval('dbeas_seq')".to_string();
+    let sql = "select nextval('dbeasy_seq')".to_string();
     let len = sql.len();
     let err = conn.execute(sql, vec![0..len]).await.unwrap_err();
     assert_eq!(err.code.as_deref(), Some("25006"), "{}", err.message);
@@ -135,7 +135,7 @@ async fn read_only_blocks_writes_in_two_layers() {
 
 #[tokio::test]
 async fn transformed_queries_run_and_keep_their_meaning() {
-    use dbeas::query::transform::{self, Direction};
+    use dbeasy::query::transform::{self, Direction};
     let Some(cfg) = config(false) else { return };
     let conn = connection::connect(cfg).await.unwrap();
     let run = |sql: String| {
@@ -181,7 +181,7 @@ async fn transformed_queries_run_and_keep_their_meaning() {
 async fn run(
     conn: &connection::ConnectionHandle,
     sql: &str,
-) -> Result<dbeas::query::Outcome, dbeas::query::QueryError> {
+) -> Result<dbeasy::query::Outcome, dbeasy::query::QueryError> {
     let len = sql.len();
     conn.execute(sql.to_string(), vec![0..len]).await
 }
@@ -195,16 +195,16 @@ async fn require_transaction_policy_and_summary() {
     let setup = connection::connect(config(false).unwrap()).await.unwrap();
     run(
         &setup,
-        "create table if not exists dbeas_tx (id int primary key, v text)",
+        "create table if not exists dbeasy_tx (id int primary key, v text)",
     )
     .await
     .unwrap();
-    run(&setup, "delete from dbeas_tx").await.unwrap();
+    run(&setup, "delete from dbeasy_tx").await.unwrap();
 
     let conn = connection::connect(cfg).await.unwrap();
     // Leitura sem transação é permitida; escrita não.
-    run(&conn, "select count(*) from dbeas_tx").await.unwrap();
-    let err = run(&conn, "insert into dbeas_tx values (1, 'a')")
+    run(&conn, "select count(*) from dbeasy_tx").await.unwrap();
+    let err = run(&conn, "insert into dbeasy_tx values (1, 'a')")
         .await
         .unwrap_err();
     assert!(
@@ -218,23 +218,23 @@ async fn require_transaction_policy_and_summary() {
 
     conn.transaction(TxCommand::Begin).await.unwrap();
     assert_eq!(conn.tx_state(), TxState::Active);
-    run(&conn, "insert into dbeas_tx values (1, 'a'), (2, 'b')")
+    run(&conn, "insert into dbeasy_tx values (1, 'a'), (2, 'b')")
         .await
         .unwrap();
-    run(&conn, "update dbeas_tx set v = 'c' where id = 2")
+    run(&conn, "update dbeasy_tx set v = 'c' where id = 2")
         .await
         .unwrap();
     let summary = conn.summary().await.unwrap();
     let t = summary
         .tables
         .iter()
-        .find(|t| t.table == "dbeas_tx")
+        .find(|t| t.table == "dbeasy_tx")
         .expect("tabela no resumo");
     assert_eq!((t.inserted, t.updated, t.deleted), (2, 1, 0));
     assert_eq!(summary.statements.len(), 2);
 
     // Erro dentro da transação: estado de erro, só ROLLBACK é aceito.
-    run(&conn, "insert into dbeas_tx values (1, 'dup')")
+    run(&conn, "insert into dbeasy_tx values (1, 'dup')")
         .await
         .unwrap_err();
     assert_eq!(conn.tx_state(), TxState::Failed);
@@ -243,7 +243,7 @@ async fn require_transaction_policy_and_summary() {
     assert!(conn.transaction(TxCommand::Commit).await.is_err());
     conn.transaction(TxCommand::Rollback).await.unwrap();
     assert_eq!(conn.tx_state(), TxState::Idle);
-    let rs = run(&conn, "select count(*) from dbeas_tx")
+    let rs = run(&conn, "select count(*) from dbeasy_tx")
         .await
         .unwrap()
         .result
@@ -260,7 +260,7 @@ async fn saved_files_may_control_the_transaction() {
     let conn = connection::connect(cfg).await.unwrap();
     conn.transaction(TxCommand::Begin).await.unwrap();
     let script =
-        "create temp table dbeas_f (a int); insert into dbeas_f values (1); commit; select 1";
+        "create temp table dbeasy_f (a int); insert into dbeasy_f values (1); commit; select 1";
     conn.execute_with(
         script.into(),
         all(script),
@@ -280,18 +280,18 @@ async fn grid_edits_are_atomic_and_join_the_transaction() {
     let conn = connection::connect(cfg).await.unwrap();
     run(
         &conn,
-        "create table if not exists dbeas_ed (id int primary key, nome text)",
+        "create table if not exists dbeasy_ed (id int primary key, nome text)",
     )
     .await
     .unwrap();
-    run(&conn, "delete from dbeas_ed").await.unwrap();
-    run(&conn, "insert into dbeas_ed values (1, 'a'), (2, 'b')")
+    run(&conn, "delete from dbeasy_ed").await.unwrap();
+    run(&conn, "insert into dbeasy_ed values (1, 'a'), (2, 'b')")
         .await
         .unwrap();
 
     let edit = |id: &str, nome: Option<&str>| EditStatement {
         sql:
-            "UPDATE dbeas_ed SET nome = $1::text::text WHERE id = $2::text::integer RETURNING nome"
+            "UPDATE dbeasy_ed SET nome = $1::text::text WHERE id = $2::text::integer RETURNING nome"
                 .into(),
         params: vec![nome.map(str::to_string), Some(id.to_string())],
         label: format!("id {id}"),
@@ -318,7 +318,7 @@ async fn grid_edits_are_atomic_and_join_the_transaction() {
         "{}",
         err.message
     );
-    let rs = run(&conn, "select nome from dbeas_ed where id = 1")
+    let rs = run(&conn, "select nome from dbeasy_ed where id = 1")
         .await
         .unwrap()
         .result
@@ -337,7 +337,7 @@ async fn grid_edits_are_atomic_and_join_the_transaction() {
         vec!["id 1 → 1 linha (grade)".to_string()]
     );
     conn.transaction(TxCommand::Rollback).await.unwrap();
-    let rs = run(&conn, "select nome from dbeas_ed where id = 1")
+    let rs = run(&conn, "select nome from dbeasy_ed where id = 1")
         .await
         .unwrap()
         .result
@@ -348,23 +348,23 @@ async fn grid_edits_are_atomic_and_join_the_transaction() {
 #[tokio::test]
 async fn selected_rows_are_deleted_by_primary_key() {
     use connection::{EditStatement, TxCommand, TxState};
-    use dbeas::data_edit;
+    use dbeasy::data_edit;
     use std::collections::BTreeSet;
     let Some(cfg) = config(false) else { return };
     let conn = connection::connect(cfg).await.unwrap();
-    let setup = "drop table if exists dbeas_del; \
-                 create table dbeas_del (a int, b text, nome text, primary key (a, b)); \
-                 insert into dbeas_del values (1, 'x', 'um'), (2, 'y', 'dois'), (3, 'z', 'tres')";
+    let setup = "drop table if exists dbeasy_del; \
+                 create table dbeasy_del (a int, b text, nome text, primary key (a, b)); \
+                 insert into dbeasy_del values (1, 'x', 'um'), (2, 'y', 'dois'), (3, 'z', 'tres')";
     conn.execute(setup.into(), all(setup)).await.unwrap();
     let catalog = conn.catalog().await.unwrap();
     let select = |conn| async move {
-        run(conn, "select nome, b, a from dbeas_del order by a")
+        run(conn, "select nome, b, a from dbeasy_del order by a")
             .await
             .unwrap()
             .result
             .unwrap()
     };
-    let statements = |rs: &dbeas::query::ResultSet, rows: &[usize]| {
+    let statements = |rs: &dbeasy::query::ResultSet, rows: &[usize]| {
         let target = data_edit::edit_target(rs, &catalog).unwrap();
         data_edit::build_deletes(&target, rs, &rows.iter().copied().collect::<BTreeSet<_>>())
             .unwrap()
@@ -393,12 +393,12 @@ async fn selected_rows_are_deleted_by_primary_key() {
 
     // Linha já removida por outra sessão: o lote inteiro é desfeito.
     let stale = statements(&rs, &[0]);
-    run(&conn, "insert into dbeas_del values (4, 'w', 'quatro')")
+    run(&conn, "insert into dbeasy_del values (4, 'w', 'quatro')")
         .await
         .unwrap();
     let rs = select(&conn).await;
     let mut batch = statements(&rs, &[1]);
-    run(&conn, "delete from dbeas_del where a = 2")
+    run(&conn, "delete from dbeasy_del where a = 2")
         .await
         .unwrap();
     batch.extend(stale);

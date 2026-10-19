@@ -1,6 +1,6 @@
 # Configuração do cargo-deny (https://embarkstudios.github.io/cargo-deny/).
 #
-# O DBeas é distribuído sob GPL-3.0-or-later. Esta configuração garante que
+# O DBeasy é distribuído sob GPL-3.0-or-later. Esta configuração garante que
 # nenhuma dependência (direta ou indireta) tenha licença incompatível, além de
 # checar avisos de segurança, crates banidos e origens dos pacotes.
 #
@@ -15,7 +15,7 @@ version = 2
 # Avisos de segurança do RustSec bloqueiam; crates retirados (yanked) só alertam.
 yanked = "warn"
 # Exceções revisadas em 2026-10-09: avisos de "sem manutenção" (não são
-# vulnerabilidades) em dependências transitivas do Iced, que o DBeas não
+# vulnerabilidades) em dependências transitivas do Iced, que o DBeasy não
 # controla. Revisar ao atualizar o Iced; qualquer outro aviso continua falhando.
 ignore = [
     { id = "RUSTSEC-2025-0141", reason = "bincode sem manutenção; vem de syntect via iced_highlighter (realce do editor)" },
