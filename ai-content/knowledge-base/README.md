@@ -45,3 +45,4 @@ decidido.
 - [Quando SQL é executado](usabilidade/execucao-sql.md) — conexão, abertura de tabela, abas restauradas em branco (reexecutam o SELECT ao clicar), nada de execução automática de SQL do usuário.
 
 - [Identificação do workspace na barra lateral](usabilidade/identificacao-workspace-sidebar.md) — usar `name` da entrada do `dbeasy.json`, não o nome do arquivo.
+- [Configurações da aplicação](usabilidade/configuracoes-app.md) — seção acima de Workspaces; seleção de tema (padrão = segue o SO) com pré-visualização, Aplicar persiste em `config`.

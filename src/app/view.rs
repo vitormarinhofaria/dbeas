@@ -20,6 +20,7 @@ use crate::connection::{self, Probe, Status, TxState};
 use crate::data_grid::{self, GridView};
 use crate::metadata::RelationKind;
 use crate::session::{ExplorerMode, TabKind};
+use crate::settings::ThemeChoice;
 use crate::sql_editor::{self, EditorView};
 use crate::workspace::add;
 use crate::workspace::editor::{Document, Field, Form, Preview};
@@ -138,11 +139,60 @@ impl App {
         };
 
         column![
+            container(self.app_settings()).padding(8),
+            rule::horizontal(1),
             container(workspaces).max_height(320).padding(8),
             rule::horizontal(1),
             container(explorer).padding(8).height(Length::Fill),
         ]
         .into()
+    }
+
+    /// Configurações da aplicação (acima de Workspaces). O tema escolhido é
+    /// pré-visualizado na interface inteira até ser aplicado ou revertido.
+    fn app_settings(&self) -> Element<'_, Message> {
+        let header = button(
+            row![
+                text(if self.app_settings_open { "▾" } else { "▸" }).size(11),
+                text("CONFIGURAÇÕES").size(11).font(BOLD).style(muted),
+            ]
+            .spacing(6),
+        )
+        .on_press(Message::ToggleAppSettings)
+        .padding(0)
+        .style(button::text);
+
+        // Corpo sempre presente (vazio quando fechado) para manter a árvore estável.
+        let body: Element<'_, Message> = if self.app_settings_open {
+            let current = self
+                .theme_preview
+                .clone()
+                .unwrap_or_else(|| self.settings.theme_choice());
+            let mut col = column![
+                text("Tema").size(13),
+                pick_list(ThemeChoice::all(), Some(current), Message::PreviewTheme)
+                    .text_size(13)
+                    .width(Length::Fill),
+            ]
+            .spacing(4);
+            if self.theme_preview.is_some() {
+                col = col
+                    .push(text("Pré-visualização: ainda não aplicado.").size(12).style(muted))
+                    .push(
+                        row![
+                            button(text("Aplicar").size(13)).on_press(Message::ApplyTheme),
+                            button(text("Reverter").size(13))
+                                .on_press(Message::RevertTheme)
+                                .style(button::secondary),
+                        ]
+                        .spacing(6),
+                    );
+            }
+            col.into()
+        } else {
+            Space::new().into()
+        };
+        column![header, body].spacing(4).into()
     }
 
     // ------------------------------------------------------------------

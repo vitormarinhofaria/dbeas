@@ -11,11 +11,47 @@ use crate::fsutil;
 
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// Escolha de tema: acompanhar o sistema (padrão) ou um tema fixo.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ThemeChoice {
+    System,
+    Named(iced::Theme),
+}
+
+impl ThemeChoice {
+    /// Todas as opções, com a do sistema primeiro.
+    pub fn all() -> Vec<Self> {
+        std::iter::once(Self::System)
+            .chain(iced::Theme::ALL.iter().cloned().map(Self::Named))
+            .collect()
+    }
+
+    /// Tema efetivo; `System` vira Light ou Dark conforme o modo do sistema.
+    pub fn resolve(&self, mode: iced::theme::Mode) -> iced::Theme {
+        match self {
+            Self::System => <iced::Theme as iced::theme::Base>::default(mode),
+            Self::Named(theme) => theme.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for ThemeChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::System => f.write_str("Padrão (sistema)"),
+            Self::Named(theme) => theme.fmt(f),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     pub version: u32,
     #[serde(default)]
     pub workspaces: Vec<PathBuf>,
+    /// Nome (`Display`) do tema aplicado; ausente acompanha o sistema.
+    #[serde(default)]
+    pub theme: Option<String>,
 }
 
 impl Default for Settings {
@@ -23,6 +59,7 @@ impl Default for Settings {
         Self {
             version: SCHEMA_VERSION,
             workspaces: Vec::new(),
+            theme: None,
         }
     }
 }
@@ -54,6 +91,15 @@ impl Settings {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(format!("não foi possível ler {}: {e}", path.display())),
         }
+    }
+
+    /// Tema aplicado; ausente ou desconhecido (ex.: tema removido) acompanha o sistema.
+    pub fn theme_choice(&self) -> ThemeChoice {
+        self.theme
+            .as_deref()
+            .and_then(|name| iced::Theme::ALL.iter().find(|t| t.to_string() == name))
+            .cloned()
+            .map_or(ThemeChoice::System, ThemeChoice::Named)
     }
 
     pub fn save(&self, path: &Path) -> Result<(), String> {
@@ -114,6 +160,27 @@ mod tests {
         s.workspaces.push(PathBuf::from("/a/dbeasy.json"));
         s.save(&path).unwrap();
         assert_eq!(Settings::load(&path).unwrap(), s);
+    }
+
+    #[test]
+    fn theme_persists_and_falls_back() {
+        use iced::theme::Mode;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config");
+        let mut s = Settings::default();
+        assert_eq!(s.theme_choice(), ThemeChoice::System);
+        s.theme = Some(iced::Theme::Nord.to_string());
+        s.save(&path).unwrap();
+        assert_eq!(
+            Settings::load(&path).unwrap().theme_choice(),
+            ThemeChoice::Named(iced::Theme::Nord)
+        );
+        s.theme = Some("inexistente".into());
+        assert_eq!(s.theme_choice(), ThemeChoice::System);
+        std::fs::write(&path, r#"{"version": 1, "workspaces": []}"#).unwrap();
+        assert_eq!(Settings::load(&path).unwrap().theme_choice(), ThemeChoice::System);
+        assert_eq!(ThemeChoice::System.resolve(Mode::Light), iced::Theme::Light);
+        assert_eq!(ThemeChoice::System.resolve(Mode::Dark), iced::Theme::Dark);
     }
 
     #[test]

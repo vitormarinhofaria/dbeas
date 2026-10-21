@@ -29,7 +29,7 @@ use crate::metadata::{self, Catalog};
 use crate::query::transform::{self, Direction};
 use crate::query::{Outcome, QueryError, split};
 use crate::session::{self, ExplorerMode, Session, TabKind};
-use crate::settings::{self, Settings};
+use crate::settings::{self, Settings, ThemeChoice};
 use crate::sql_editor;
 use crate::workspace::editor::{self as config_editor, SslChoice};
 use crate::workspace::{self, WorkspaceId};
@@ -66,6 +66,12 @@ fn window_settings() -> iced::window::Settings {
 pub struct App {
     settings_path: PathBuf,
     settings: Settings,
+    /// Seção de configurações da barra lateral aberta.
+    app_settings_open: bool,
+    /// Tema em pré-visualização, ainda não aplicado.
+    theme_preview: Option<ThemeChoice>,
+    /// Modo claro/escuro do sistema, para a opção de tema padrão.
+    system_mode: iced::theme::Mode,
     session_path: PathBuf,
     /// Última sessão conhecida, inclusive de workspaces que não puderam ser
     /// carregados agora (arquivo ausente), para não perder seu estado.
@@ -439,6 +445,11 @@ pub enum Message {
     QuickOpenPick(usize),
     ShowShortcuts,
     ShowAbout,
+    ToggleAppSettings,
+    PreviewTheme(ThemeChoice),
+    SystemTheme(iced::theme::Mode),
+    ApplyTheme,
+    RevertTheme,
     AboutToggleLicense,
     AboutOpenSource,
     AboutOpenThirdParty,
@@ -480,6 +491,9 @@ impl App {
         let mut app = Self {
             settings_path,
             settings,
+            app_settings_open: false,
+            theme_preview: None,
+            system_mode: iced::theme::Mode::None,
             session_path,
             sidebar_width: session.layout.sidebar_width.clamp(180.0, 700.0),
             session,
@@ -506,7 +520,10 @@ impl App {
             modifiers: Modifiers::empty(),
         };
 
-        let mut tasks = vec![app.reload_workspaces()];
+        let mut tasks = vec![
+            app.reload_workspaces(),
+            iced::system::theme().map(Message::SystemTheme),
+        ];
         let active = app
             .session
             .active_workspace
@@ -531,7 +548,10 @@ impl App {
     }
 
     fn theme(&self) -> Theme {
-        Theme::CatppuccinMocha
+        self.theme_preview
+            .clone()
+            .unwrap_or_else(|| self.settings.theme_choice())
+            .resolve(self.system_mode)
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -576,6 +596,7 @@ impl App {
                 _ => None,
             }));
         }
+        subs.push(iced::system::theme_changes().map(Message::SystemTheme));
         Subscription::batch(subs)
     }
 
@@ -1803,6 +1824,40 @@ impl App {
             }
             Message::ShowShortcuts => {
                 self.modal = Some(Modal::Shortcuts);
+                Task::none()
+            }
+            Message::ToggleAppSettings => {
+                self.app_settings_open = !self.app_settings_open;
+                if !self.app_settings_open {
+                    self.theme_preview = None;
+                }
+                Task::none()
+            }
+            Message::PreviewTheme(theme) => {
+                self.theme_preview = (theme != self.settings.theme_choice()).then_some(theme);
+                Task::none()
+            }
+            Message::SystemTheme(mode) => {
+                self.system_mode = mode;
+                Task::none()
+            }
+            Message::RevertTheme => {
+                self.theme_preview = None;
+                Task::none()
+            }
+            Message::ApplyTheme => {
+                if let Some(theme) = self.theme_preview.take() {
+                    self.settings.theme = match theme {
+                        ThemeChoice::System => None,
+                        ThemeChoice::Named(theme) => Some(theme.to_string()),
+                    };
+                    if let Err(e) = self.settings.save(&self.settings_path) {
+                        self.notice = Some(Notice {
+                            text: e,
+                            is_error: true,
+                        });
+                    }
+                }
                 Task::none()
             }
             Message::ShowAbout => {
