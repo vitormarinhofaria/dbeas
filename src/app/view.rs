@@ -111,27 +111,45 @@ impl App {
     // Barra lateral
 
     fn sidebar(&self) -> Element<'_, Message> {
-        let mut list = Column::new().spacing(2);
-        for (i, ws) in self.workspaces.iter().enumerate() {
-            list = list.push(workspace_item(i, ws, self.active == Some(i)));
-        }
-        if self.workspaces.is_empty() {
-            list = list.push(text("Nenhum workspace registrado.").size(13).style(muted));
-        }
-
-        let workspaces = column![
-            row![
-                text("WORKSPACES").size(11).font(BOLD).style(muted),
-                space::horizontal(),
-                button(text("+").size(14))
-                    .on_press(Message::OpenAddWorkspace)
-                    .padding([0, 8])
-                    .style(button::text),
-            ]
-            .align_y(Alignment::Center),
-            scrollable(list).height(Length::Shrink),
+        let header = row![
+            button(
+                row![
+                    text(if self.workspaces_open { "▾" } else { "▸" }).size(11),
+                    text("WORKSPACES").size(11).font(BOLD).style(muted),
+                ]
+                .spacing(6),
+            )
+            .on_press(Message::ToggleWorkspaces)
+            .padding(0)
+            .style(button::text),
+            space::horizontal(),
+            button(text("+").size(14))
+                .on_press(Message::OpenAddWorkspace)
+                .padding([0, 8])
+                .style(button::text),
         ]
-        .spacing(4);
+        .align_y(Alignment::Center);
+
+        // Corpo sempre presente (lista ou resumo do ativo) para manter a árvore estável.
+        let body: Element<'_, Message> = if self.workspaces_open {
+            let mut list = Column::new().spacing(2);
+            for (i, ws) in self.workspaces.iter().enumerate() {
+                list = list.push(workspace_item(i, ws, self.active == Some(i)));
+            }
+            if self.workspaces.is_empty() {
+                list = list.push(text("Nenhum workspace registrado.").size(13).style(muted));
+            }
+            scrollable(list).height(Length::Shrink).into()
+        } else if let Some(ws) = self.active_ws() {
+            row![status_dot(ws.status), text(&ws.desc.display_name).size(13).font(BOLD)]
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .into()
+        } else {
+            text("Nenhum workspace ativo.").size(13).style(muted).into()
+        };
+
+        let workspaces = column![header, body].spacing(4);
 
         let explorer: Element<'_, Message> = match self.active_ws() {
             Some(ws) => explorer(ws),

@@ -68,6 +68,8 @@ pub struct App {
     settings: Settings,
     /// Seção de configurações da barra lateral aberta.
     app_settings_open: bool,
+    /// Lista de workspaces da barra lateral expandida (recolhida mostra só o ativo).
+    workspaces_open: bool,
     /// Tema em pré-visualização, ainda não aplicado.
     theme_preview: Option<ThemeChoice>,
     /// Modo claro/escuro do sistema, para a opção de tema padrão.
@@ -446,6 +448,7 @@ pub enum Message {
     ShowShortcuts,
     ShowAbout,
     ToggleAppSettings,
+    ToggleWorkspaces,
     PreviewTheme(ThemeChoice),
     SystemTheme(iced::theme::Mode),
     ApplyTheme,
@@ -492,6 +495,7 @@ impl App {
             settings_path,
             settings,
             app_settings_open: false,
+            workspaces_open: false,
             theme_preview: None,
             system_mode: iced::theme::Mode::None,
             session_path,
@@ -1831,6 +1835,10 @@ impl App {
                 if !self.app_settings_open {
                     self.theme_preview = None;
                 }
+                Task::none()
+            }
+            Message::ToggleWorkspaces => {
+                self.workspaces_open = !self.workspaces_open;
                 Task::none()
             }
             Message::PreviewTheme(theme) => {

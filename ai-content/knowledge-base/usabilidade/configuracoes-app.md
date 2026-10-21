@@ -20,3 +20,11 @@ Seção **CONFIGURAÇÕES** na barra lateral, logo acima de Workspaces
 Corpo da seção é sempre um widget (`Space` quando recolhida) para manter a árvore
 estável — ver [Iced: estabilidade da árvore](../arquitetura/iced-estabilidade-da-arvore.md).
 Decisão de 2026-10-21.
+
+## Seção Workspaces recolhível
+
+A seção **WORKSPACES** também recolhe/expande ao clicar no título
+(`App::workspaces_open`, `Message::ToggleWorkspaces`; botão **+** continua no
+cabeçalho). Começa **recolhida**: mostra só o ponto de status e o nome do
+workspace ativo (`display_name`); expandida, mostra a lista completa. O corpo é
+sempre um widget (lista ou resumo) para manter a árvore estável. Decisão de 2026-10-21.
